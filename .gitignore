@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+*.cover
+
+# Data
+data/raw/editxml/*.mp4
+data/raw/editxml/*.xml
+data/processed/input_features/*.csv
+data/processed/output_labels/*.csv
+data/temp/
+
+# Models
+models/checkpoints/
+models/checkpoints_50epochs/
+models/test_checkpoints/
+*.pth
+*.pkl
+
+# Outputs
+outputs/inference_results/*.xml
+outputs/test_outputs/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archive
+archive/
+
+# Temporary files
+*.tmp
+*.bak

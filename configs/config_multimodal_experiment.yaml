@@ -1,0 +1,67 @@
+# Multimodal Training Experiment Configuration (10 epochs)
+
+# Data paths
+train_data: preprocessed_data/train_sequences.npz
+val_data: preprocessed_data/val_sequences.npz
+features_dir: input_features
+
+# Multimodal settings
+enable_multimodal: True  # Python boolean
+fusion_type: gated
+use_modality_attention_mask: True  # Python boolean
+
+# Feature dimensions
+audio_features: 17  # 4 base + 1 telop_active + 6 speech embeddings + 6 telop embeddings
+visual_features: 522  # 10 scalar + 512 CLIP
+track_features: 180  # 20 tracks × 9 parameters (old format)
+
+# Model architecture
+d_model: 256
+nhead: 8
+num_encoder_layers: 6
+dim_feedforward: 1024
+dropout: 0.1
+num_tracks: 20
+max_asset_classes: 10
+
+# Training hyperparameters
+batch_size: 16
+num_epochs: 10  # Short experiment
+learning_rate: 0.0001
+weight_decay: 0.00001
+grad_clip: 1.0
+
+# Optimizer and scheduler
+optimizer: adam
+scheduler: cosine
+warmup_epochs: 2
+min_lr: 0.000001
+
+# Loss weights
+active_weight: 1.0
+asset_weight: 1.0
+scale_weight: 1.0
+position_weight: 1.0
+crop_weight: 1.0
+ignore_inactive: true
+
+# Checkpointing
+checkpoint_dir: checkpoints_multimodal
+save_every: 5
+early_stopping_patience: null
+
+# Data loading
+num_workers: 0
+
+# Device
+cpu: false
+
+# Feature alignment settings
+alignment_tolerance: 0.05
+max_interpolation_ratio: 0.5
+max_gap_seconds: 5.0
+
+# Memory optimization
+use_fp16_visual: true
+lazy_loading: true
+cache_aligned_features: true

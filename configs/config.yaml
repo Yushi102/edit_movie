@@ -1,0 +1,47 @@
+# Multi-Track Transformer Training Configuration
+
+# Data paths
+train_data: preprocessed_data/train_sequences.npz
+val_data: preprocessed_data/val_sequences.npz
+
+# Model architecture
+input_features: 180  # 20 tracks × 9 parameters
+d_model: 256
+nhead: 8
+num_encoder_layers: 6
+dim_feedforward: 1024
+dropout: 0.1
+num_tracks: 20
+max_asset_classes: 10
+
+# Training hyperparameters
+batch_size: 16
+num_epochs: 100
+learning_rate: 0.0001
+weight_decay: 0.00001
+grad_clip: 1.0
+
+# Optimizer and scheduler
+optimizer: adam  # adam, adamw, sgd
+scheduler: cosine  # cosine, step, plateau, none
+warmup_epochs: 5
+min_lr: 0.000001
+
+# Loss weights
+active_weight: 1.0
+asset_weight: 1.0
+scale_weight: 1.0
+position_weight: 1.0
+crop_weight: 1.0
+ignore_inactive: true
+
+# Checkpointing
+checkpoint_dir: checkpoints
+save_every: 5
+early_stopping_patience: null  # null = disabled, or set to number of epochs
+
+# Data loading
+num_workers: 0
+
+# Device
+cpu: false  # Set to true to force CPU training
