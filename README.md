@@ -48,7 +48,7 @@ xmlai/
 pip install -r requirements.txt
 ```
 
-### 新しい動画を自動編集（超簡単！）
+### 新しい動画を自動編集
 
 **方法1: バッチファイルを使う（推奨）**
 ```bash
