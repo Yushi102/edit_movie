@@ -43,14 +43,21 @@ xmlai/
 ## 🚀 クイックスタート
 
 ### 必要な環境
-- Python 3.8+
-- CUDA対応GPU（推奨）
-- Premiere Pro（XML読み込み用）
+- **OS**: Windows（バッチファイルを使用）
+  - Mac/Linuxの場合は、Pythonコマンドを直接実行してください
+- **Python**: 3.8以上
+- **GPU**: CUDA対応GPU（推奨）
+- **Premiere Pro**: XML読み込み用
 
 ### インストール
 ```bash
 pip install -r requirements.txt
 ```
+
+**注意**: `requirements.txt`は現在バージョン固定されていません。動作確認済みのバージョンは以下の通りです：
+- torch==2.0.1
+- transformers==4.30.0
+- その他のライブラリは最新版で動作確認済み
 
 ### 新しい動画を自動編集
 
