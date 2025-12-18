@@ -1,42 +1,53 @@
 # Deep Learning
+# 動作確認済みバージョン: torch==2.9.1, torchvision==0.24.1
 torch>=2.0.0
 torchvision>=0.15.0
 
 # Computer Vision
+# 動作確認済みバージョン: opencv-python==4.12.0.88, mediapipe==0.10.21
 opencv-python>=4.8.0
 mediapipe>=0.10.0
 
 # Data Processing
+# 動作確認済みバージョン: numpy==1.26.4, pandas==2.3.3, scipy==1.16.3
 numpy>=1.24.0
 pandas>=2.0.0
 scipy>=1.10.0
 
 # NLP & Embeddings
+# 動作確認済みバージョン: transformers==4.57.3
 transformers>=4.30.0
-sentence-transformers>=2.2.0
-
-# OCR
-easyocr>=1.7.0
 
 # Audio Processing & Speech Recognition
+# 動作確認済みバージョン: openai-whisper==20250625, librosa==0.11.0, soundfile==0.13.1, pydub==0.25.1
 openai-whisper>=20231117
 librosa>=0.10.0
 soundfile>=0.12.0
 pydub>=0.25.0
 
 # Video Editing
+# 動作確認済みバージョン: opentimelineio==0.18.1
 opentimelineio>=0.15.0
 
 # Configuration
+# 動作確認済みバージョン: pyyaml==6.0.3
 pyyaml>=6.0
 
 # Testing
+# 動作確認済みバージョン: pytest==9.0.2
 pytest>=7.4.0
-pytest-cov>=4.1.0
 
 # Utilities
+# 動作確認済みバージョン: tqdm==4.67.1, pillow==11.3.0
 tqdm>=4.65.0
 pillow>=10.0.0
 
-# Optional: For GPU acceleration
+# Optional: 以下は現在未使用ですが、将来的に実装予定の機能で必要になる可能性があります
+# sentence-transformers>=2.2.0  # AI字幕生成機能で使用予定
+# easyocr>=1.7.0                # テロップOCR機能で使用予定
+# pytest-cov>=4.1.0             # テストカバレッジ測定用
+
+# Optional: GPU acceleration
 # cudatoolkit>=11.8  # Install via conda if needed
+# 注意: 上記のバージョンはCPU版です。GPU版を使用する場合は、PyTorchの公式サイトから
+# CUDA対応版をインストールしてください: https://pytorch.org/get-started/locally/
