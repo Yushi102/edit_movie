@@ -55,13 +55,13 @@ pip install numpy pandas
 #### 単一ファイルのテスト
 
 ```cmd
-test_fcpxml_extraction.bat "C:\Users\yushi\Documents\プログラム\editxml\your_file.fcpxml"
+test_fcpxml_extraction.bat "path\to\your_file.fcpxml"
 ```
 
 #### 複数ファイルの一括処理
 
 ```cmd
-batch_test_fcpxml.bat "C:\Users\yushi\Documents\プログラム\editxml"
+batch_test_fcpxml.bat "path\to\fcpxml_directory"
 ```
 
 これらのバッチファイルは自動的に：

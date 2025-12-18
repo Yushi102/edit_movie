@@ -13,7 +13,7 @@
 ### 方法1: バッチファイルを使う（簡単！）
 
 ```bash
-run_inference.bat "D:\videos\my_video.mp4"
+run_inference.bat "path\to\your_video.mp4"
 ```
 
 これだけで完了！Premiere Pro用のXMLが `outputs/inference_results/result.xml` に生成されます。
@@ -25,7 +25,7 @@ run_inference.bat "D:\videos\my_video.mp4"
 set PYTHONPATH=%PYTHONPATH%;%CD%\src
 
 # 1. 推論実行
-python src/inference/inference_pipeline.py "D:\videos\my_video.mp4" ^
+python src/inference/inference_pipeline.py "path\to\your_video.mp4" ^
     --model models/checkpoints_50epochs/best_model.pth ^
     --output outputs/inference_results/temp.xml
 

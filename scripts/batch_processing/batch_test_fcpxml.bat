@@ -1,6 +1,6 @@
 @echo off
 REM 複数のFCPXMLファイルを一括処理
-REM 使用方法: batch_test_fcpxml.bat "C:\Users\yushi\Documents\プログラム\editxml"
+REM 使用方法: batch_test_fcpxml.bat "path\to\fcpxml_directory"
 
 echo ========================================
 echo FCPXML 一括抽出テスト
@@ -9,7 +9,7 @@ echo.
 
 if "%~1"=="" (
     echo エラー: FCPXMLファイルが含まれるディレクトリを指定してください
-    echo 使用例: batch_test_fcpxml.bat "C:\Users\yushi\Documents\プログラム\editxml"
+    echo 使用例: batch_test_fcpxml.bat "path\to\fcpxml_directory"
     exit /b 1
 )
 

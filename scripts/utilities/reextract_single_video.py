@@ -15,9 +15,9 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Test video
-video_name = "bandicam 2025-03-03 22-34-57-492"
-video_path = rf"D:\切り抜き\2025-3\2025-3-03\{video_name}.mp4"
+# Example video - replace with your actual video path
+video_name = "your_video_name"
+video_path = r"path/to/your/video.mp4"
 output_dir = "input_features"
 
 logger.info(f"Re-extracting features with telop for: {video_name}")

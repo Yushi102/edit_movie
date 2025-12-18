@@ -43,7 +43,7 @@
 
 ```bash
 # ステップ1: 推論を実行してOTIO XMLを生成（音声カット済み）
-python inference_pipeline.py "D:\切り抜き\2025-6\2025-6-02\bandicam 2025-06-02 00-03-33-780.mp4" --model checkpoints_50epochs/best_model.pth --output temp.xml
+python inference_pipeline.py "path/to/your_video.mp4" --model checkpoints_50epochs/best_model.pth --output temp.xml
 
 # ステップ2: テロップをグラフィックに変換
 python fix_telop_simple.py temp.xml final.xml

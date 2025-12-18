@@ -331,7 +331,8 @@ def process_xml_to_csv(xml_file):
     print(f"Dataset saved: {output_csv}")
 
 if __name__ == "__main__":
-    target_folder = r"C:\Users\yushi\Documents\プログラム\xmlai\edit_triaining"
+    # Default to current directory's edit_training folder
+    target_folder = os.path.join(os.getcwd(), "edit_training")
     parser = argparse.ArgumentParser()
     parser.add_argument("folder", nargs="?", default=target_folder)
     args = parser.parse_args()

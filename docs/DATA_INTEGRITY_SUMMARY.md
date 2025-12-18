@@ -40,8 +40,8 @@ extract_features_worker(video_path, output_dir)
 
 **例**:
 ```
-bandicam 2025-06-11 22-48-40-994.xml
-→ D:\切り抜き\2025-6\2025-6-11\bandicam 2025-06-11 22-48-40-994.mp4
+video_name.xml
+→ path/to/video_name.mp4
 ```
 
 ### 3. データ整合性の確認

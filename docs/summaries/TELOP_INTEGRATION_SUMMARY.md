@@ -116,7 +116,7 @@ MultimodalTransformer
 既存の動画特徴量CSVにはテロップ情報が含まれていないため、再抽出が必要：
 
 ```bash
-python extract_video_features_parallel.py --input_dir "D:\切り抜き" --output_dir input_features
+python extract_video_features_parallel.py --input_dir "path/to/videos" --output_dir input_features
 ```
 
 ### 2. トレーニング

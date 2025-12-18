@@ -1,6 +1,6 @@
 @echo off
 REM FCPXML抽出テストスクリプト
-REM 使用方法: test_fcpxml_extraction.bat "C:\Users\yushi\Documents\プログラム\editxml\your_file.fcpxml"
+REM 使用方法: test_fcpxml_extraction.bat "path\to\your_file.fcpxml"
 
 echo ========================================
 echo FCPXML 抽出テスト
@@ -9,7 +9,7 @@ echo.
 
 if "%~1"=="" (
     echo エラー: FCPXMLファイルのパスを指定してください
-    echo 使用例: test_fcpxml_extraction.bat "C:\Users\yushi\Documents\プログラム\editxml\your_file.fcpxml"
+    echo 使用例: test_fcpxml_extraction.bat "path\to\your_file.fcpxml"
     exit /b 1
 )
 

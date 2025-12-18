@@ -40,7 +40,15 @@ env/
 htmlcov/
 *.cover
 
-# Data
+# Data (exclude all video files and personal data)
+data/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.xml
+!configs/*.xml
+!docs/**/*.xml
 data/raw/editxml/*.mp4
 data/raw/editxml/*.xml
 data/processed/input_features/*.csv
@@ -55,7 +63,8 @@ checkpoints/
 *.pth
 *.pkl
 
-# Outputs
+# Outputs (exclude generated files)
+outputs/
 outputs/inference_results/*.xml
 outputs/test_outputs/
 

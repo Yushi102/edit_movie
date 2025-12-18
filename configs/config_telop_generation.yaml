@@ -1,11 +1,11 @@
 # AI Telop Generation Configuration
 
 telop_generation:
-  enabled: true
+  enabled: false  # テロップ生成を無効化
   
   # Speech Recognition Settings
   speech:
-    enabled: true
+    enabled: false  # 音声認識を無効化
     model: "whisper"  # ASR model type: "whisper" or "vosk"
     model_size: "small"  # Whisper model size: "tiny", "small", "medium", "large"
     language: "ja"  # Language code: "ja" (Japanese), "en" (English)

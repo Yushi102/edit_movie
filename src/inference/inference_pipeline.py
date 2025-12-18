@@ -1091,14 +1091,17 @@ class InferencePipeline:
                 if best_track_per_frame[t] != current_track:
                     # トラックが変わった、または非アクティブになった
                     if current_track >= 0:
-                        # 前のトラックのセグメントを保存
+                        # 前のトラックのセグメントを保存（最小継続時間チェックなし）
                         end_frame = t - 1
                         
-                        # このセグメントのパラメータを計算
+                        # スコア（active確率の平均）を計算
+                        avg_score = float(np.mean(active_probs[start_frame:end_frame+1, current_track]))
+                        
                         track_data = {
                             'track_id': current_track,
                             'start_frame': start_frame,
                             'end_frame': end_frame,
+                            'score': avg_score,  # 優先順位付け用のスコア
                             'asset_id': int(np.median(predictions['asset'][start_frame:end_frame+1, current_track].argmax(axis=-1))) if 'asset' in predictions else 0,
                             'scale': float(np.mean(predictions['scale'][start_frame:end_frame+1, current_track])),
                             'position_x': float(np.mean(predictions['pos_x'][start_frame:end_frame+1, current_track])) if 'pos_x' in predictions else 0.0,
@@ -1114,13 +1117,18 @@ class InferencePipeline:
                     current_track = best_track_per_frame[t]
                     start_frame = t
             
-            # 最後のセグメントを保存
+            # 最後のセグメントを保存（最小継続時間チェックなし）
             if current_track >= 0:
                 end_frame = seq_len - 1
+                
+                # スコア（active確率の平均）を計算
+                avg_score = float(np.mean(active_probs[start_frame:end_frame+1, current_track]))
+                
                 track_data = {
                     'track_id': current_track,
                     'start_frame': start_frame,
                     'end_frame': end_frame,
+                    'score': avg_score,  # 優先順位付け用のスコア
                     'asset_id': int(np.median(predictions['asset'][start_frame:end_frame+1, current_track].argmax(axis=-1))) if 'asset' in predictions else 0,
                     'scale': float(np.mean(predictions['scale'][start_frame:end_frame+1, current_track])),
                     'position_x': float(np.mean(predictions['pos_x'][start_frame:end_frame+1, current_track])) if 'pos_x' in predictions else 0.0,
@@ -1131,6 +1139,94 @@ class InferencePipeline:
                     'crop_bottom': float(np.mean(predictions['crop_b'][start_frame:end_frame+1, current_track])) if 'crop_b' in predictions else 0.0,
                 }
                 tracks_data.append(track_data)
+        
+        # 短いギャップを埋めてクリップを結合
+        if len(tracks_data) > 1:
+            max_gap_duration = 2.0  # 最大ギャップ: 2.0秒
+            merged_tracks = []
+            i = 0
+            
+            while i < len(tracks_data):
+                current = tracks_data[i].copy()
+                
+                # 次のクリップとのギャップをチェック
+                while i + 1 < len(tracks_data):
+                    next_clip = tracks_data[i + 1]
+                    gap_frames = next_clip['start_frame'] - current['end_frame'] - 1
+                    gap_seconds = gap_frames / self.fps
+                    
+                    # ギャップが短い場合は結合
+                    if gap_seconds <= max_gap_duration:
+                        logger.debug(f"  短いギャップを埋めて結合: {gap_seconds:.2f}秒")
+                        # end_frameを次のクリップの終了位置に延長
+                        current['end_frame'] = next_clip['end_frame']
+                        i += 1
+                    else:
+                        break
+                
+                merged_tracks.append(current)
+                i += 1
+            
+            logger.info(f"  ギャップ結合: {len(tracks_data)}個 → {len(merged_tracks)}個のクリップ")
+            tracks_data = merged_tracks
+        
+        # 最小継続時間でフィルタリング（ギャップ結合後）
+        min_clip_duration = 3.0  # 最小継続時間: 3.0秒
+        filtered_tracks = []
+        
+        for track in tracks_data:
+            duration_frames = track['end_frame'] - track['start_frame'] + 1
+            duration_seconds = duration_frames / self.fps
+            
+            if duration_seconds >= min_clip_duration:
+                filtered_tracks.append(track)
+            else:
+                logger.debug(f"  短すぎるクリップをスキップ: {duration_seconds:.2f}秒 (最小: {min_clip_duration}秒)")
+        
+        if len(filtered_tracks) < len(tracks_data):
+            logger.info(f"  最小継続時間フィルタ: {len(tracks_data)}個 → {len(filtered_tracks)}個のクリップ")
+            tracks_data = filtered_tracks
+        
+        # 優先順位をつけて合計時間を制限
+        target_duration = 90.0  # 目標: 90秒
+        max_duration = 150.0    # 最大: 150秒
+        
+        if len(tracks_data) > 0:
+            # 各クリップの継続時間を計算
+            for track in tracks_data:
+                duration_frames = track['end_frame'] - track['start_frame'] + 1
+                track['duration_seconds'] = duration_frames / self.fps
+            
+            # 合計時間を計算
+            total_duration = sum(track['duration_seconds'] for track in tracks_data)
+            logger.info(f"  フィルタ後の合計時間: {total_duration:.1f}秒")
+            
+            # 合計時間が目標を超える場合、優先順位をつけて選択
+            if total_duration > target_duration:
+                logger.info(f"  合計時間が目標({target_duration}秒)を超えています。優先順位をつけて選択します...")
+                
+                # 優先順位: スコア（モデルの確信度）が高いクリップを優先
+                # スコア = active確率の平均値
+                tracks_data_sorted = sorted(tracks_data, key=lambda x: x['score'], reverse=True)
+                
+                selected_tracks = []
+                cumulative_duration = 0.0
+                
+                for track in tracks_data_sorted:
+                    if cumulative_duration + track['duration_seconds'] <= max_duration:
+                        selected_tracks.append(track)
+                        cumulative_duration += track['duration_seconds']
+                        
+                        # 目標時間に達したら終了
+                        if cumulative_duration >= target_duration:
+                            break
+                
+                # 時系列順に並び替え
+                selected_tracks = sorted(selected_tracks, key=lambda x: x['start_frame'])
+                
+                logger.info(f"  優先順位選択: {len(tracks_data)}個 → {len(selected_tracks)}個のクリップ")
+                logger.info(f"  最終合計時間: {cumulative_duration:.1f}秒")
+                tracks_data = selected_tracks
         
         # デバッグ: active予測の統計を表示
         active_logits = predictions['active']  # (seq_len, num_tracks, 2)
@@ -1152,8 +1248,8 @@ class InferencePipeline:
         
         logger.info(f"  Detected {len(tracks_data)} active track segments")
         
-        # テロップ情報を抽出（OCR）
-        telops = self._extract_telop_info(video_name)
+        # テロップ情報を抽出（OCR）- 設定で無効化されている場合はスキップ
+        telops = []
         
         # AI字幕を生成
         logger.info("Step 4.1: Generating AI telops...")
