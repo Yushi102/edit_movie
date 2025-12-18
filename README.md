@@ -9,12 +9,14 @@
 - **マルチモーダル学習**: 音声・映像・トラックの3つのモダリティを統合
 - **自動カット検出**: AIが最適なカット位置を予測
 - **音声同期カット**: 映像と音声を同じ位置で自動カット
-- **テロップ自動配置**: OCRでテロップを検出し、Premiere Pro互換のグラフィックとして出力
-- **🆕 AI字幕生成**: 音声認識と感情検出で自動的に字幕を生成
-  - 音声認識（Whisper）による自動文字起こし
-  - 感情検出（笑い、驚き、悲しみ）による感情字幕
-  - カスタマイズ可能なテキストパターン
+- **クリップフィルタリング**: 短すぎるクリップの除外、ギャップ結合、優先順位付け
 - **Premiere Pro連携**: 生成されたXMLをそのままPremiere Proで開ける
+
+### 将来的に実装予定の機能
+
+- **AI字幕生成**: 音声認識（Whisper）と感情検出による自動字幕生成
+- **テロップ自動配置**: OCRで検出したテロップのXML出力
+- **動的な解像度対応**: 入力動画に応じた自動シーケンス設定
 
 ## 📁 プロジェクト構造
 
@@ -54,7 +56,7 @@ pip install -r requirements.txt
 
 **方法1: バッチファイルを使う（推奨）**
 ```bash
-run_inference.bat "D:\videos\my_video.mp4"
+run_inference.bat "path\to\your_video.mp4"
 ```
 
 **方法2: 手動で実行**
@@ -67,45 +69,12 @@ python -m src.inference.inference_pipeline "your_video.mp4" outputs/inference_re
 
 詳しくは [QUICK_START.md](QUICK_START.md) を参照してください。
 
-### 🆕 AI字幕生成を使う
-
-```bash
-# 1. 依存関係をインストール
-pip install openai-whisper librosa soundfile pydub
-
-# 2. AI字幕生成を有効にして推論
-python -m src.inference.inference_pipeline "your_video.mp4" outputs/inference_results/output.xml
-
-# 3. Premiere Proで output.xml を開く
-```
-
-**カスタマイズ**:
-- 感情検出の感度調整: `configs/config_telop_generation.yaml`を編集
-- テキストパターン変更: 笑い（"www"）、驚き（"！"）、悲しみ（"..."）
-- 詳細は [AI字幕カスタマイズガイド](docs/guides/AI_TELOP_CUSTOMIZATION_GUIDE.md) を参照
-
-**コマンドラインオプション**:
-```bash
-# カスタム設定ファイルを使用
-python -m src.inference.inference_pipeline video.mp4 output.xml --telop_config my_config.yaml
-
-# 音声認識のみ（感情検出なし）
-python -m src.inference.inference_pipeline video.mp4 output.xml --no-emotion
-
-# 感情検出のみ（音声認識なし）
-python -m src.inference.inference_pipeline video.mp4 output.xml --no-speech
-```
-
 ## 📚 ドキュメント
 
 ### 基本ガイド
 - [プロジェクト全体の流れ](docs/guides/PROJECT_WORKFLOW_GUIDE.md)
 - [必要なファイル一覧](docs/guides/REQUIRED_FILES_BY_PHASE.md)
 - [音声カット & テロップ変換](docs/summaries/AUDIO_CUT_AND_TELOP_GRAPHICS_SUMMARY.md)
-
-### 🆕 AI字幕生成ガイド
-- [AI字幕カスタマイズガイド](docs/guides/AI_TELOP_CUSTOMIZATION_GUIDE.md) - 詳細な設定方法
-- [AI字幕クイックリファレンス](docs/guides/AI_TELOP_QUICK_REFERENCE.md) - 簡単な設定例
 
 ## 🔧 開発
 
@@ -144,8 +113,13 @@ pytest tests/integration/
 - **想定入力**: 10分程度の動画
 - **出力**: 約2分（90秒〜150秒）のハイライト動画
 - **学習時間**: 100エポック（約2-3時間、GPU使用時）
+<<<<<<< HEAD
 - **推論時間**: 約30秒/動画（特徴量抽出含む）
 - **カット数**: 約8〜12個のクリップ（最小3秒、ギャップ結合・優先順位付け後）
+=======
+- **推論時間**: 5~10分/動画（特徴量抽出含む）
+- **カット数**: 約500個/動画（閾値0.29の場合）
+>>>>>>> d7dcce2d6a90147a891489c030a765a17e50d8e7
 - **モデル性能**: 学習データは十分にあるが、Active閾値0.29が必要なほど確信度が低い（Loss関数の調整が必要）
 
 ## ⚠️ 既知の問題点・改善点
