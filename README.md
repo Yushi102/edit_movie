@@ -101,13 +101,8 @@ python -m src.inference.inference_pipeline "your_video.mp4" outputs/inference_re
 
 ### データ準備
 ```bash
-# バッチファイルで一括実行（推奨）
-run_data_preparation.bat
-
-# または手動で実行
-python -m src.data_preparation.premiere_xml_parser
-python -m src.data_preparation.extract_video_features_parallel
-python -m src.data_preparation.data_preprocessing
+# カット選択用データの作成
+python scripts/create_cut_selection_data.py
 ```
 
 ### 学習
@@ -125,26 +120,9 @@ train_cut_selection.bat
 # 2秒ごとに自動更新されるグラフで学習の様子をリアルタイム確認
 ```
 
-**可視化される情報:**
-- 損失関数（Train/Val Loss）
-- 損失の内訳（CE Loss vs TV Loss）
-- 分類性能（Accuracy & F1 Score）
-- Precision, Recall, Specificity
-- 最適閾値の推移
-- 予測の採用/不採用割合
-
-**データ分割の特徴:**
-- 動画単位で学習/検証に分割（データリーク防止）
-- 同じ動画のシーケンスは必ず同じセットに配置
-- より厳密な汎化性能の評価が可能
-
 ### テスト
 ```bash
-# ユニットテスト
-pytest tests/unit/
-
-# 統合テスト
-pytest tests/integration/
+# カット選択モデルのテストは今後実装予定
 ```
 
 ## 📊 性能
