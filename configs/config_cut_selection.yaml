@@ -1,15 +1,18 @@
-# Multimodal Training Experiment Configuration (10 epochs)
+# Cut Selection Model Configuration
+# Stage 1: Select which parts of the video to keep (cut selection only)
+# Uses audio + visual features only, no track information
 
 # Data paths
-train_data: preprocessed_data/train_sequences.npz
-val_data: preprocessed_data/val_sequences.npz
+train_data: preprocessed_data/train_sequences_cut_selection.npz
+val_data: preprocessed_data/val_sequences_cut_selection.npz
 features_dir: data/processed/source_features  # Not used (data already integrated in NPZ)
 
 # Multimodal settings
 enable_multimodal: true
 fusion_type: gated
 use_modality_attention_mask: true
-use_track_features: false  # Disable track features for cut selection only
+# Note: Track features are used during training as ground truth,
+# but will be set to zero during inference for cut selection
 
 # Feature dimensions
 audio_features: 215  # 4 base + 192 speaker_emb + 16 emotion + 2 text/telop + 1 speaker_id
@@ -39,7 +42,7 @@ d_model: 256
 nhead: 8
 num_encoder_layers: 6
 dim_feedforward: 1024
-dropout: 0.1
+dropout: 0.15  # Increased for better regularization (was 0.1)
 num_tracks: 20
 max_asset_classes: 250  # Support up to 250 different character assets (max observed: 212)
 # Character Selection Strategy:
@@ -68,10 +71,10 @@ max_asset_classes: 250  # Support up to 250 different character assets (max obse
 #   - Generalizes to new speakers with similar voice characteristics
 
 # Training hyperparameters
-batch_size: 8  # Increased from 1 for better GPU utilization (sequences are 1000 timesteps)
-num_epochs: 100  # Full training
-learning_rate: 0.0003  # Increased from 0.0001 for faster convergence with larger batch
-weight_decay: 0.00001
+batch_size: 16  # Increased for GPU (was 4 for CPU)
+num_epochs: 50  # Increased for full training (was 20)
+learning_rate: 0.0001  # Reduced from 0.001 for more stable learning
+weight_decay: 0.0001  # Increased for better regularization (was 0.00001)
 grad_clip: 1.0
 
 # Optimizer and scheduler
@@ -81,33 +84,43 @@ warmup_epochs: 2
 min_lr: 0.000001
 
 # Loss weights
-# Set auto_balance_weights to true to automatically analyze class balance
-# and adjust weights accordingly
-auto_balance_weights: false  # Manually set weights
+# Balanced approach: prevent overfitting while detecting active samples
+auto_balance_weights: false  # Don't auto-balance - use manual weights
+use_focal_loss: true  # Use Focal Loss for better learning on hard examples
+focal_alpha: 0.70  # Balanced weight for active class (0.70 = 採用を見逃すと2.3倍のペナルティ)
+                   # alpha > 0.5 means: missing active samples is more costly
+                   # 0.5 = balanced, 0.70 = 2.3x penalty for FN, 0.75 = 3x penalty
+                   # Reduced from 0.75 to prevent overfitting
+focal_gamma: 2.0  # Focus on hard examples
 
-active_weight: 100.0  # Focus only on cut selection
+# Temporal smoothness (prevents chattering/flickering)
+tv_weight: 0.05  # Total Variation loss weight (0.01-0.5)
+                 # Balanced between classification accuracy and smoothness
+
+active_weight: 100.0  # Focus only on cut selection (used if auto_balance_weights=false)
 asset_weight: 0.0  # Disable - will be handled in stage 2
 scale_weight: 0.0  # Disable - will be handled in stage 2
 position_weight: 0.0  # Disable - will be handled in stage 2
 rotation_weight: 0.0  # Disable - will be handled in stage 2
 crop_weight: 0.0  # Disable - will be handled in stage 2
 ignore_inactive: true
-label_smoothing: 0.1  # Prevent overconfidence in classification (0.0-0.2 recommended)
+label_smoothing: 0.0  # Disabled for clearer classification (was 0.1)
 
 # Checkpointing
-checkpoint_dir: checkpoints
+checkpoint_dir: checkpoints_cut_selection
 save_every: 5
-early_stopping_patience: 15  # Stop if no improvement for 15 epochs
+early_stopping_patience: 20  # Increased from 15 to allow more training
 
 # Data loading
-num_workers: 4  # Increased from 0 for parallel data loading (adjust based on CPU cores)
+num_workers: 0  # Set to 0 for Windows compatibility (multiprocessing issues)
+                # On Linux/Mac, can use 4-8 for faster data loading
 
 # Device
-cpu: false
+cpu: false  # Use GPU (CUDA) if available
 
-# Performance optimization
-use_amp: true  # Automatic Mixed Precision (1.5-2x faster, 50% less memory)
-gradient_accumulation_steps: 1  # Accumulate gradients over N steps (effective_batch = batch_size * N)
+# Performance optimization (GPU)
+use_amp: true  # Automatic Mixed Precision (1.5-2x faster on GPU, 50% less VRAM)
+gradient_accumulation_steps: 1  # Increase if GPU memory is limited (effective_batch = batch_size * N)
 
 # Feature alignment settings
 alignment_tolerance: 0.05

@@ -1,12 +1,12 @@
 """
-FCPXML Parser - Extract Track Information for Multi-Track Transformer
+FCPXML/XMEML Parser - Extract Track Information for Multi-Track Transformer
 
-This script parses Final Cut Pro X XML files and extracts editing track information
-including clip positions, scales, crops, and asset IDs.
+This script parses Final Cut Pro X XML (FCPXML) and Final Cut Pro 7 XML (XMEML) files
+and extracts editing track information including clip positions, scales, crops, and asset IDs.
 
 Output format matches the expected input for the Multi-Track Transformer model:
-- 20 tracks × 9 parameters = 180 dimensions per timestep
-- Parameters: [active, asset_id, scale, x, y, crop_l, crop_r, crop_t, crop_b]
+- 20 tracks × 12 parameters = 240 dimensions per timestep
+- Parameters: [active, asset_id, scale, x, y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b]
 """
 import xml.etree.ElementTree as ET
 import numpy as np
@@ -22,11 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 class FCPXMLParser:
-    """Parser for Final Cut Pro X XML files"""
+    """Parser for Final Cut Pro X XML (FCPXML) and Final Cut Pro 7 XML (XMEML) files"""
     
     def __init__(self, max_tracks: int = 20, fps: float = 10.0):
         """
-        Initialize FCPXML Parser
+        Initialize FCPXML/XMEML Parser
         
         Args:
             max_tracks: Maximum number of tracks to extract (default: 20)
@@ -40,30 +40,45 @@ class FCPXMLParser:
         self.asset_mapping = {}
         self.next_asset_id = 0
         
+        # XML format detection
+        self.xml_format = None  # Will be 'fcpxml' or 'xmeml'
+        
         logger.info(f"FCPXMLParser initialized: max_tracks={max_tracks}, fps={fps}")
     
-    def parse_time(self, time_str: str) -> float:
+    def parse_time(self, time_str: str, timebase: int = None) -> float:
         """
-        Parse FCPXML time format to seconds
+        Parse FCPXML/XMEML time format to seconds
         
         Args:
-            time_str: Time string in format "1234/2400s" (frames/framerate)
+            time_str: Time string in format "1234/2400s" (FCPXML) or frame number (XMEML)
+            timebase: Timebase for XMEML format (frames per second)
         
         Returns:
             Time in seconds
         """
-        if not time_str or time_str == '0s':
+        if not time_str:
             return 0.0
         
-        # Remove 's' suffix
-        time_str = time_str.rstrip('s')
+        # FCPXML format: "1234/2400s"
+        if isinstance(time_str, str) and time_str.endswith('s'):
+            time_str = time_str.rstrip('s')
+            if time_str == '0':
+                return 0.0
+            if '/' in time_str:
+                numerator, denominator = time_str.split('/')
+                return float(numerator) / float(denominator)
+            else:
+                return float(time_str)
         
-        # Parse fraction
-        if '/' in time_str:
-            numerator, denominator = time_str.split('/')
-            return float(numerator) / float(denominator)
-        else:
-            return float(time_str)
+        # XMEML format: frame number
+        try:
+            frames = int(time_str)
+            if timebase and timebase > 0:
+                return frames / float(timebase)
+            else:
+                return frames / 30.0  # Default to 30fps if no timebase
+        except (ValueError, TypeError):
+            return 0.0
     
     def get_asset_id(self, clip_name: str) -> int:
         """
@@ -80,6 +95,175 @@ class FCPXMLParser:
             self.next_asset_id += 1
         
         return self.asset_mapping[clip_name]
+    
+    def extract_clip_info_xmeml(self, clipitem: ET.Element, track_index: int, timebase: int) -> Dict:
+        """
+        Extract information from an XMEML clipitem element
+        
+        Args:
+            clipitem: XML element representing a clipitem
+            track_index: Index of the track this clip belongs to
+            timebase: Timebase (frames per second) from the sequence
+        
+        Returns:
+            Dict with clip information
+        """
+        # Get clip name
+        name_elem = clipitem.find('name')
+        clip_name = name_elem.text if name_elem is not None and name_elem.text else f'clip_{track_index}'
+        
+        # Get timing information
+        start_elem = clipitem.find('start')
+        end_elem = clipitem.find('end')
+        in_elem = clipitem.find('in')
+        out_elem = clipitem.find('out')
+        
+        start_frame = int(start_elem.text) if start_elem is not None and start_elem.text else 0
+        end_frame = int(end_elem.text) if end_elem is not None and end_elem.text else 0
+        in_frame = int(in_elem.text) if in_elem is not None and in_elem.text else 0
+        out_frame = int(out_elem.text) if out_elem is not None and out_elem.text else 0
+        
+        start_time = self.parse_time(str(start_frame), timebase)
+        end_time = self.parse_time(str(end_frame), timebase)
+        duration = end_time - start_time
+        
+        # Get asset ID
+        asset_id = self.get_asset_id(clip_name)
+        
+        # Extract transform parameters (scale, position, rotation, anchor) from filters
+        scale = 1.0
+        pos_x = 0.0
+        pos_y = 0.0
+        anchor_x = 0.0
+        anchor_y = 0.0
+        rotation = 0.0
+        
+        # Look for filter effects
+        for filter_elem in clipitem.findall('.//filter'):
+            for effect in filter_elem.findall('.//effect'):
+                effect_name = effect.find('name')
+                if effect_name is not None and effect_name.text:
+                    name = effect_name.text.lower()
+                    
+                    # Look for parameters
+                    for param in effect.findall('.//parameter'):
+                        param_name_elem = param.find('name')
+                        param_value_elem = param.find('value')
+                        param_id_elem = param.find('parameterid')
+                        
+                        if param_name_elem is not None:
+                            param_name = param_name_elem.text.lower() if param_name_elem.text else ''
+                            param_id = param_id_elem.text.lower() if param_id_elem is not None and param_id_elem.text else ''
+                            
+                            # Handle rotation (single value)
+                            if param_id == 'rotation' or param_name == 'rotation':
+                                if param_value_elem is not None and param_value_elem.text:
+                                    try:
+                                        rotation = float(param_value_elem.text)
+                                    except (ValueError, TypeError):
+                                        pass
+                            
+                            # Handle scale (single value)
+                            elif param_id == 'scale' or param_name == 'scale':
+                                if param_value_elem is not None and param_value_elem.text:
+                                    try:
+                                        scale = float(param_value_elem.text) / 100.0  # XMEML often uses percentage
+                                    except (ValueError, TypeError):
+                                        pass
+                            
+                            # Handle center position (horiz/vert values)
+                            elif param_id == 'center' or param_name == 'center':
+                                value_elem = param.find('value')
+                                if value_elem is not None:
+                                    horiz_elem = value_elem.find('horiz')
+                                    vert_elem = value_elem.find('vert')
+                                    if horiz_elem is not None and horiz_elem.text:
+                                        try:
+                                            pos_x = float(horiz_elem.text)
+                                        except (ValueError, TypeError):
+                                            pass
+                                    if vert_elem is not None and vert_elem.text:
+                                        try:
+                                            pos_y = float(vert_elem.text)
+                                        except (ValueError, TypeError):
+                                            pass
+                            
+                            # Handle anchor point (horiz/vert values)
+                            elif param_id == 'centeroffset' or 'anchor' in param_name:
+                                value_elem = param.find('value')
+                                if value_elem is not None:
+                                    horiz_elem = value_elem.find('horiz')
+                                    vert_elem = value_elem.find('vert')
+                                    if horiz_elem is not None and horiz_elem.text:
+                                        try:
+                                            anchor_x = float(horiz_elem.text)
+                                        except (ValueError, TypeError):
+                                            pass
+                                    if vert_elem is not None and vert_elem.text:
+                                        try:
+                                            anchor_y = float(vert_elem.text)
+                                        except (ValueError, TypeError):
+                                            pass
+        
+        # Extract crop parameters
+        crop_l = 0.0
+        crop_r = 0.0
+        crop_t = 0.0
+        crop_b = 0.0
+        
+        # Look for crop parameters in the same filter
+        for filter_elem in clipitem.findall('.//filter'):
+            for effect in filter_elem.findall('.//effect'):
+                for param in effect.findall('.//parameter'):
+                    param_id_elem = param.find('parameterid')
+                    param_name_elem = param.find('name')
+                    param_value_elem = param.find('value')
+                    
+                    if param_id_elem is not None and param_value_elem is not None:
+                        param_id = param_id_elem.text.lower() if param_id_elem.text else ''
+                        param_name = param_name_elem.text.lower() if param_name_elem is not None and param_name_elem.text else ''
+                        
+                        try:
+                            param_value = float(param_value_elem.text)
+                            
+                            if param_id == 'leftcrop' or 'left' in param_name:
+                                crop_l = param_value
+                            elif param_id == 'rightcrop' or 'right' in param_name:
+                                crop_r = param_value
+                            elif param_id == 'topcrop' or 'top' in param_name:
+                                crop_t = param_value
+                            elif param_id == 'bottomcrop' or 'bottom' in param_name:
+                                crop_b = param_value
+                        except (ValueError, TypeError):
+                            pass
+        
+        # Check if enabled
+        enabled_elem = clipitem.find('enabled')
+        enabled = enabled_elem is None or enabled_elem.text != 'FALSE'
+        
+        return {
+            'track_index': track_index,
+            'start_time': start_time,
+            'end_time': end_time,
+            'duration': duration,
+            'asset_id': asset_id,
+            'scale': scale,
+            'pos_x': pos_x,
+            'pos_y': pos_y,
+            'anchor_x': anchor_x,
+            'anchor_y': anchor_y,
+            'rotation': rotation,
+            'crop_l': crop_l,
+            'crop_r': crop_r,
+            'crop_t': crop_t,
+            'crop_b': crop_b,
+            'clip_name': clip_name,
+            'clip_ref': '',
+            'enabled': enabled,
+            'source_start': self.parse_time(str(in_frame), timebase),
+            'source_duration': self.parse_time(str(out_frame - in_frame), timebase),
+            'graphics_text': ''
+        }
     
     def extract_clip_info(self, clip_element: ET.Element, track_index: int) -> Dict:
         """
@@ -127,10 +311,13 @@ class FCPXMLParser:
         
         graphics_text = ' | '.join(text_content) if text_content else ''
         
-        # Extract transform parameters (scale, position)
+        # Extract transform parameters (scale, position, rotation, anchor)
         scale = 1.0
         pos_x = 0.0
         pos_y = 0.0
+        anchor_x = 0.0
+        anchor_y = 0.0
+        rotation = 0.0
         
         # Look for transform parameters in video elements
         for video in clip_element.findall('.//video'):
@@ -143,6 +330,13 @@ class FCPXMLParser:
                     value = float(param_value)
                     if 'scale' in param_name.lower():
                         scale = value
+                    elif 'rotation' in param_name.lower():
+                        rotation = value
+                    elif 'anchor' in param_name.lower():
+                        if 'x' in param_name.lower():
+                            anchor_x = value
+                        elif 'y' in param_name.lower():
+                            anchor_y = value
                     elif 'x' in param_name.lower() and 'position' in param_name.lower():
                         pos_x = value
                     elif 'y' in param_name.lower() and 'position' in param_name.lower():
@@ -184,6 +378,9 @@ class FCPXMLParser:
             'scale': scale,
             'pos_x': pos_x,
             'pos_y': pos_y,
+            'anchor_x': anchor_x,
+            'anchor_y': anchor_y,
+            'rotation': rotation,
             'crop_l': crop_l,
             'crop_r': crop_r,
             'crop_t': crop_t,
@@ -195,6 +392,70 @@ class FCPXMLParser:
             'source_duration': source_duration,
             'graphics_text': graphics_text
         }
+    
+    def parse_xmeml(self, xml_path: str) -> Tuple[List[Dict], float]:
+        """
+        Parse XMEML file and extract all clips
+        
+        Args:
+            xml_path: Path to XMEML file
+        
+        Returns:
+            Tuple of (list of clip dicts, total duration in seconds)
+        """
+        logger.info(f"Parsing XMEML: {xml_path}")
+        
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        clips = []
+        max_end_time = 0.0
+        
+        # Find all sequences
+        for sequence in root.findall('.//sequence'):
+            # Get timebase from rate
+            timebase = 30  # Default
+            rate_elem = sequence.find('.//rate/timebase')
+            if rate_elem is not None and rate_elem.text:
+                try:
+                    timebase = int(rate_elem.text)
+                except ValueError:
+                    pass
+            
+            logger.info(f"  Sequence timebase: {timebase} fps")
+            
+            # Get sequence duration
+            duration_elem = sequence.find('duration')
+            if duration_elem is not None and duration_elem.text:
+                try:
+                    duration_frames = int(duration_elem.text)
+                    max_end_time = self.parse_time(str(duration_frames), timebase)
+                except ValueError:
+                    pass
+            
+            # Find all video tracks
+            media = sequence.find('media')
+            if media is not None:
+                video = media.find('video')
+                if video is not None:
+                    tracks = video.findall('track')
+                    
+                    for track_index, track in enumerate(tracks):
+                        if track_index >= self.max_tracks:
+                            logger.warning(f"Reached max tracks ({self.max_tracks}), skipping remaining tracks")
+                            break
+                        
+                        # Process all clipitems in this track
+                        for clipitem in track.findall('.//clipitem'):
+                            clip_info = self.extract_clip_info_xmeml(clipitem, track_index, timebase)
+                            clips.append(clip_info)
+                            
+                            max_end_time = max(max_end_time, clip_info['end_time'])
+        
+        logger.info(f"Extracted {len(clips)} clips, total duration: {max_end_time:.2f}s")
+        logger.info(f"Unique assets: {len(self.asset_mapping)}")
+        
+        return clips, max_end_time
     
     def parse_fcpxml(self, xml_path: str) -> Tuple[List[Dict], float]:
         """
@@ -249,6 +510,33 @@ class FCPXMLParser:
         
         return clips, max_end_time
     
+    def parse_xml(self, xml_path: str) -> Tuple[List[Dict], float]:
+        """
+        Auto-detect XML format and parse accordingly
+        
+        Args:
+            xml_path: Path to XML file
+        
+        Returns:
+            Tuple of (list of clip dicts, total duration in seconds)
+        """
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        # Detect format
+        if root.tag == 'xmeml':
+            self.xml_format = 'xmeml'
+            logger.info("Detected XMEML format (Final Cut Pro 7)")
+            return self.parse_xmeml(xml_path)
+        elif root.tag == 'fcpxml':
+            self.xml_format = 'fcpxml'
+            logger.info("Detected FCPXML format (Final Cut Pro X)")
+            return self.parse_fcpxml(xml_path)
+        else:
+            logger.warning(f"Unknown XML format: {root.tag}, attempting FCPXML parser")
+            self.xml_format = 'fcpxml'
+            return self.parse_fcpxml(xml_path)
+    
     def clips_to_track_sequence(self, clips: List[Dict], total_duration: float) -> np.ndarray:
         """
         Convert clip list to track sequence array
@@ -258,14 +546,14 @@ class FCPXMLParser:
             total_duration: Total duration of the sequence in seconds
         
         Returns:
-            Array of shape (num_timesteps, num_tracks, 9)
-            9 parameters: [active, asset_id, scale, x, y, crop_l, crop_r, crop_t, crop_b]
+            Array of shape (num_timesteps, num_tracks, 12)
+            12 parameters: [active, asset_id, scale, x, y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b]
         """
         # Calculate number of timesteps
         num_timesteps = int(np.ceil(total_duration * self.fps)) + 1
         
         # Initialize array with zeros
-        sequence = np.zeros((num_timesteps, self.max_tracks, 9), dtype=np.float32)
+        sequence = np.zeros((num_timesteps, self.max_tracks, 12), dtype=np.float32)
         
         # Fill in clip data
         for clip in clips:
@@ -288,10 +576,13 @@ class FCPXMLParser:
                 sequence[t, track_idx, 2] = clip['scale']
                 sequence[t, track_idx, 3] = clip['pos_x']
                 sequence[t, track_idx, 4] = clip['pos_y']
-                sequence[t, track_idx, 5] = clip['crop_l']
-                sequence[t, track_idx, 6] = clip['crop_r']
-                sequence[t, track_idx, 7] = clip['crop_t']
-                sequence[t, track_idx, 8] = clip['crop_b']
+                sequence[t, track_idx, 5] = clip['anchor_x']
+                sequence[t, track_idx, 6] = clip['anchor_y']
+                sequence[t, track_idx, 7] = clip['rotation']
+                sequence[t, track_idx, 8] = clip['crop_l']
+                sequence[t, track_idx, 9] = clip['crop_r']
+                sequence[t, track_idx, 10] = clip['crop_t']
+                sequence[t, track_idx, 11] = clip['crop_b']
         
         logger.info(f"Created sequence: shape={sequence.shape}")
         return sequence
@@ -308,7 +599,7 @@ class FCPXMLParser:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Flatten to (num_timesteps, 180) for model input
+        # Flatten to (num_timesteps, 240) for model input (20 tracks × 12 parameters)
         num_timesteps = sequence.shape[0]
         flattened = sequence.reshape(num_timesteps, -1)
         
@@ -383,10 +674,13 @@ class FCPXMLParser:
                     'scale': params[2],
                     'pos_x': params[3],
                     'pos_y': params[4],
-                    'crop_l': params[5],
-                    'crop_r': params[6],
-                    'crop_t': params[7],
-                    'crop_b': params[8]
+                    'anchor_x': params[5],
+                    'anchor_y': params[6],
+                    'rotation': params[7],
+                    'crop_l': params[8],
+                    'crop_r': params[9],
+                    'crop_t': params[10],
+                    'crop_b': params[11]
                 })
         
         df = pd.DataFrame(rows)
@@ -416,8 +710,8 @@ def main():
     # Create parser
     fcpxml_parser = FCPXMLParser(max_tracks=args.max_tracks, fps=args.fps)
     
-    # Parse FCPXML
-    clips, total_duration = fcpxml_parser.parse_fcpxml(args.input)
+    # Parse XML (auto-detect format)
+    clips, total_duration = fcpxml_parser.parse_xml(args.input)
     
     # Convert to sequence
     sequence = fcpxml_parser.clips_to_track_sequence(clips, total_duration)

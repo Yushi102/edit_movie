@@ -28,7 +28,8 @@ class MultiTrackLoss(nn.Module):
         position_weight: float = 1.0,
         rotation_weight: float = 1.0,
         crop_weight: float = 1.0,
-        ignore_inactive: bool = True
+        ignore_inactive: bool = True,
+        label_smoothing: float = 0.0
     ):
         """
         Initialize loss function
@@ -41,6 +42,7 @@ class MultiTrackLoss(nn.Module):
             rotation_weight: Weight for rotation regression loss
             crop_weight: Weight for crop regression loss
             ignore_inactive: If True, only compute regression loss for active tracks
+            label_smoothing: Label smoothing factor (0.0 = no smoothing, 0.1 = 10% smoothing)
         """
         super().__init__()
         
@@ -51,9 +53,10 @@ class MultiTrackLoss(nn.Module):
         self.rotation_weight = rotation_weight
         self.crop_weight = crop_weight
         self.ignore_inactive = ignore_inactive
+        self.label_smoothing = label_smoothing
         
         # Loss functions
-        self.ce_loss = nn.CrossEntropyLoss(reduction='none')
+        self.ce_loss = nn.CrossEntropyLoss(reduction='none', label_smoothing=label_smoothing)
         self.mse_loss = nn.MSELoss(reduction='none')
         
         logger.info(f"MultiTrackLoss initialized:")
@@ -64,6 +67,7 @@ class MultiTrackLoss(nn.Module):
         logger.info(f"  rotation_weight: {rotation_weight}")
         logger.info(f"  crop_weight: {crop_weight}")
         logger.info(f"  ignore_inactive: {ignore_inactive}")
+        logger.info(f"  label_smoothing: {label_smoothing}")
     
     def forward(
         self,
@@ -131,14 +135,15 @@ class MultiTrackLoss(nn.Module):
             # Get active mask from targets
             active_mask = (targets['active'] == 1).float()  # (batch, seq_len, num_tracks)
             active_mask = active_mask * mask_expanded  # Combine with padding mask
-            
-            # Avoid division by zero
-            active_count = active_mask.sum()
-            if active_count == 0:
-                active_count = 1.0
         else:
             active_mask = mask_expanded.float()
-            active_count = active_mask.sum()
+        
+        # Calculate total active count across entire batch for consistent normalization
+        # This ensures stable gradients regardless of per-frame active track count
+        active_count = active_mask.sum()
+        
+        # Avoid division by zero (use max to ensure at least 1.0)
+        active_count = torch.clamp(active_count, min=1.0)
         
         # Scale loss
         scale_pred = predictions['scale'].squeeze(-1)  # (batch, seq_len, num_tracks)
@@ -146,7 +151,7 @@ class MultiTrackLoss(nn.Module):
         scale_loss = self.mse_loss(scale_pred, scale_target)
         scale_loss = (scale_loss * active_mask).sum() / active_count
         
-        # Position loss (x, y, anchor_x, anchor_y)
+        # Position loss (x, y)
         pos_x_pred = predictions['pos_x'].squeeze(-1)
         pos_x_target = targets['pos_x'].squeeze(-1)
         pos_x_loss = self.mse_loss(pos_x_pred, pos_x_target)
@@ -155,6 +160,7 @@ class MultiTrackLoss(nn.Module):
         pos_y_target = targets['pos_y'].squeeze(-1)
         pos_y_loss = self.mse_loss(pos_y_pred, pos_y_target)
         
+        # Anchor loss (anchor_x, anchor_y)
         anchor_x_pred = predictions['anchor_x'].squeeze(-1)
         anchor_x_target = targets['anchor_x'].squeeze(-1)
         anchor_x_loss = self.mse_loss(anchor_x_pred, anchor_x_target)
@@ -278,6 +284,61 @@ def create_optimizer(
     return optimizer
 
 
+class WarmupScheduler:
+    """Learning rate scheduler with warmup"""
+    
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        base_scheduler: torch.optim.lr_scheduler._LRScheduler,
+        warmup_epochs: int,
+        warmup_start_lr: float = 1e-6
+    ):
+        """
+        Initialize warmup scheduler
+        
+        Args:
+            optimizer: Optimizer
+            base_scheduler: Base scheduler to use after warmup
+            warmup_epochs: Number of warmup epochs
+            warmup_start_lr: Starting learning rate for warmup
+        """
+        self.optimizer = optimizer
+        self.base_scheduler = base_scheduler
+        self.warmup_epochs = warmup_epochs
+        self.warmup_start_lr = warmup_start_lr
+        self.base_lr = optimizer.param_groups[0]['lr']
+        self.current_epoch = 0
+    
+    def step(self, epoch: Optional[int] = None):
+        """Step the scheduler"""
+        if epoch is not None:
+            self.current_epoch = epoch
+        else:
+            self.current_epoch += 1
+        
+        if self.current_epoch < self.warmup_epochs:
+            # Linear warmup
+            lr = self.warmup_start_lr + (self.base_lr - self.warmup_start_lr) * (self.current_epoch / self.warmup_epochs)
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = lr
+        else:
+            # Use base scheduler
+            self.base_scheduler.step()
+    
+    def state_dict(self):
+        """Return state dict"""
+        return {
+            'current_epoch': self.current_epoch,
+            'base_scheduler': self.base_scheduler.state_dict()
+        }
+    
+    def load_state_dict(self, state_dict):
+        """Load state dict"""
+        self.current_epoch = state_dict['current_epoch']
+        self.base_scheduler.load_state_dict(state_dict['base_scheduler'])
+
+
 def create_scheduler(
     optimizer: torch.optim.Optimizer,
     scheduler_type: str = 'cosine',
@@ -286,7 +347,7 @@ def create_scheduler(
     min_lr: float = 1e-6
 ) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
     """
-    Create learning rate scheduler
+    Create learning rate scheduler with warmup
     
     Args:
         optimizer: Optimizer
@@ -301,20 +362,21 @@ def create_scheduler(
     if scheduler_type.lower() == 'none':
         return None
     
+    # Create base scheduler
     if scheduler_type.lower() == 'cosine':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=num_epochs - warmup_epochs,
             eta_min=min_lr
         )
     elif scheduler_type.lower() == 'step':
-        scheduler = torch.optim.lr_scheduler.StepLR(
+        base_scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
             step_size=num_epochs // 3,
             gamma=0.1
         )
     elif scheduler_type.lower() == 'plateau':
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        base_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
             factor=0.5,
@@ -324,7 +386,19 @@ def create_scheduler(
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
     
-    logger.info(f"Created {scheduler_type} scheduler")
+    # Wrap with warmup if warmup_epochs > 0
+    if warmup_epochs > 0:
+        scheduler = WarmupScheduler(
+            optimizer=optimizer,
+            base_scheduler=base_scheduler,
+            warmup_epochs=warmup_epochs,
+            warmup_start_lr=min_lr
+        )
+        logger.info(f"Created {scheduler_type} scheduler with {warmup_epochs} warmup epochs")
+    else:
+        scheduler = base_scheduler
+        logger.info(f"Created {scheduler_type} scheduler (no warmup)")
+    
     return scheduler
 
 
@@ -337,7 +411,7 @@ def prepare_targets_from_input(
     
     Args:
         input_sequences: Input tensor of shape (batch, seq_len, features)
-            where features = num_tracks * 12 (active, asset, scale, x, y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b)
+            where features = num_tracks * 12 (active, asset, scale, pos_x, pos_y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b)
         num_tracks: Number of tracks
     
     Returns:

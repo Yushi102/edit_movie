@@ -4,6 +4,7 @@ Training pipeline for Multi-Track Transformer
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 import logging
 import time
@@ -29,7 +30,8 @@ class TrainingPipeline:
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         gradient_clipper: Optional[GradientClipper] = None,
         device: str = 'cpu',
-        checkpoint_dir: str = 'checkpoints'
+        checkpoint_dir: str = 'checkpoints',
+        use_amp: bool = True
     ):
         """
         Initialize training pipeline
@@ -42,6 +44,7 @@ class TrainingPipeline:
             gradient_clipper: Optional gradient clipper
             device: Device to train on ('cpu' or 'cuda')
             checkpoint_dir: Directory to save checkpoints
+            use_amp: Use automatic mixed precision training (faster, less memory)
         """
         self.model = model.to(device)
         self.loss_fn = loss_fn
@@ -51,6 +54,16 @@ class TrainingPipeline:
         self.device = device
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(exist_ok=True)
+        
+        # Mixed precision training
+        self.use_amp = use_amp and device == 'cuda'
+        if self.use_amp:
+            self.scaler = GradScaler()
+            logger.info("  Mixed precision training (AMP) enabled")
+        else:
+            self.scaler = None
+            if device == 'cuda':
+                logger.info("  Mixed precision training (AMP) disabled")
         
         # Training history
         self.history = {
@@ -140,8 +153,14 @@ class TrainingPipeline:
                 # Prepare targets from track data
                 targets = prepare_targets_from_input(track)
                 
-                # Forward pass
-                predictions = self.model(audio, visual, track, padding_mask, modality_mask)
+                # Forward pass with mixed precision
+                if self.use_amp:
+                    with autocast():
+                        predictions = self.model(audio, visual, track, padding_mask, modality_mask)
+                        losses = self.loss_fn(predictions, targets, padding_mask)
+                else:
+                    predictions = self.model(audio, visual, track, padding_mask, modality_mask)
+                    losses = self.loss_fn(predictions, targets, padding_mask)
             else:
                 # Track-only forward pass (backward compatibility)
                 sequences = batch['sequences'].to(self.device)
@@ -150,32 +169,54 @@ class TrainingPipeline:
                 # Prepare targets from input sequences
                 targets = prepare_targets_from_input(sequences)
                 
-                # Forward pass
-                predictions = self.model(sequences, masks)
+                # Forward pass with mixed precision
+                if self.use_amp:
+                    with autocast():
+                        predictions = self.model(sequences, masks)
+                        losses = self.loss_fn(predictions, targets, masks)
+                else:
+                    predictions = self.model(sequences, masks)
+                    losses = self.loss_fn(predictions, targets, masks)
                 padding_mask = masks
-            
-            # Compute loss
-            losses = self.loss_fn(predictions, targets, padding_mask)
             
             # Check for NaN or Inf
             if torch.isnan(losses['total']) or torch.isinf(losses['total']):
                 logger.warning(f"⚠️  NaN/Inf detected in batch {batch_idx}! Skipping...")
                 continue
             
-            # Backward pass
+            # Backward pass with mixed precision
             self.optimizer.zero_grad()
-            losses['total'].backward()
             
-            # Gradient clipping
-            if self.gradient_clipper is not None:
-                grad_norm = self.gradient_clipper.clip(self.model)
+            if self.use_amp:
+                # Scaled backward pass
+                self.scaler.scale(losses['total']).backward()
                 
-                # Check for gradient explosion
-                if grad_norm > 100.0:
-                    logger.warning(f"⚠️  Large gradient norm detected: {grad_norm:.2f}")
-            
-            # Optimizer step
-            self.optimizer.step()
+                # Gradient clipping (unscale first)
+                if self.gradient_clipper is not None:
+                    self.scaler.unscale_(self.optimizer)
+                    grad_norm = self.gradient_clipper.clip(self.model)
+                    
+                    # Check for gradient explosion
+                    if grad_norm > 100.0:
+                        logger.warning(f"⚠️  Large gradient norm detected: {grad_norm:.2f}")
+                
+                # Optimizer step with scaler
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                # Standard backward pass
+                losses['total'].backward()
+                
+                # Gradient clipping
+                if self.gradient_clipper is not None:
+                    grad_norm = self.gradient_clipper.clip(self.model)
+                    
+                    # Check for gradient explosion
+                    if grad_norm > 100.0:
+                        logger.warning(f"⚠️  Large gradient norm detected: {grad_norm:.2f}")
+                
+                # Optimizer step
+                self.optimizer.step()
             
             # Accumulate losses
             total_loss += losses['total'].item()
@@ -213,7 +254,8 @@ class TrainingPipeline:
     def validate(
         self,
         val_loader: DataLoader,
-        epoch: int
+        epoch: int,
+        calculate_clip_metrics: bool = True
     ) -> Dict[str, float]:
         """
         Validate the model
@@ -221,6 +263,7 @@ class TrainingPipeline:
         Args:
             val_loader: Validation data loader
             epoch: Current epoch number
+            calculate_clip_metrics: クリップレベルの指標を計算するか
         
         Returns:
             Dict with validation metrics
@@ -237,6 +280,10 @@ class TrainingPipeline:
             'crop': 0.0
         }
         num_batches = 0
+        
+        # クリップレベルの指標を集計
+        clip_metrics_sum = {}
+        clip_metrics_count = 0
         
         # Modality utilization tracking
         modality_stats = {
@@ -280,8 +327,14 @@ class TrainingPipeline:
                     # Prepare targets from track data
                     targets = prepare_targets_from_input(track)
                     
-                    # Forward pass
-                    predictions = self.model(audio, visual, track, padding_mask, modality_mask)
+                    # Forward pass with mixed precision
+                    if self.use_amp:
+                        with autocast():
+                            predictions = self.model(audio, visual, track, padding_mask, modality_mask)
+                            losses = self.loss_fn(predictions, targets, padding_mask)
+                    else:
+                        predictions = self.model(audio, visual, track, padding_mask, modality_mask)
+                        losses = self.loss_fn(predictions, targets, padding_mask)
                 else:
                     # Track-only forward pass (backward compatibility)
                     sequences = batch['sequences'].to(self.device)
@@ -290,12 +343,15 @@ class TrainingPipeline:
                     # Prepare targets
                     targets = prepare_targets_from_input(sequences)
                     
-                    # Forward pass
-                    predictions = self.model(sequences, masks)
+                    # Forward pass with mixed precision
+                    if self.use_amp:
+                        with autocast():
+                            predictions = self.model(sequences, masks)
+                            losses = self.loss_fn(predictions, targets, masks)
+                    else:
+                        predictions = self.model(sequences, masks)
+                        losses = self.loss_fn(predictions, targets, masks)
                     padding_mask = masks
-                
-                # Compute loss
-                losses = self.loss_fn(predictions, targets, padding_mask)
                 
                 # Check for NaN or Inf
                 if torch.isnan(losses['total']) or torch.isinf(losses['total']):
@@ -308,12 +364,47 @@ class TrainingPipeline:
                     loss_components[key] += losses[key].item()
                 num_batches += 1
                 
+                # クリップレベルの指標を計算（5エポックごと、または最終エポック）
+                if calculate_clip_metrics and (epoch % 5 == 0 or epoch == 1):
+                    try:
+                        from src.training.clip_metrics import calculate_batch_clip_metrics
+                        
+                        batch_clip_metrics = calculate_batch_clip_metrics(
+                            predictions=predictions,
+                            targets=targets,
+                            fps=10.0,
+                            active_threshold=0.5
+                        )
+                        
+                        # 集計
+                        for key, value in batch_clip_metrics.items():
+                            if key not in clip_metrics_sum:
+                                clip_metrics_sum[key] = 0.0
+                            clip_metrics_sum[key] += value
+                        clip_metrics_count += 1
+                    except Exception as e:
+                        logger.debug(f"Failed to calculate clip metrics: {e}")
+                
                 # Update progress bar
                 pbar.set_postfix({'loss': losses['total'].item()})
         
         # Average losses
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         avg_components = {k: v / num_batches for k, v in loss_components.items()} if num_batches > 0 else loss_components
+        
+        # Average clip metrics
+        avg_clip_metrics = {}
+        if clip_metrics_count > 0:
+            avg_clip_metrics = {k: v / clip_metrics_count for k, v in clip_metrics_sum.items()}
+            
+            logger.info(f"\n📊 Clip-level Metrics (Epoch {epoch} Val):")
+            logger.info(f"  Clip F1: {avg_clip_metrics.get('clip_f1', 0.0):.4f}")
+            logger.info(f"  Clip Count MAE: {avg_clip_metrics.get('clip_count_mae', 0.0):.2f}")
+            logger.info(f"  Avg Pred Clips: {avg_clip_metrics.get('avg_pred_clip_count', 0.0):.1f}")
+            logger.info(f"  Avg Target Clips: {avg_clip_metrics.get('avg_target_clip_count', 0.0):.1f}")
+            logger.info(f"  Total Duration MAE: {avg_clip_metrics.get('total_duration_mae', 0.0):.2f}s")
+            logger.info(f"  Avg Pred Duration: {avg_clip_metrics.get('avg_pred_total_duration', 0.0):.1f}s")
+            logger.info(f"  Avg Target Duration: {avg_clip_metrics.get('avg_target_total_duration', 0.0):.1f}s")
         
         # Log modality utilization statistics
         if modality_stats['total_samples'] > 0:
@@ -329,6 +420,7 @@ class TrainingPipeline:
         return {
             'total_loss': avg_loss,
             **avg_components,
+            **avg_clip_metrics,
             'modality_stats': modality_stats
         }
 

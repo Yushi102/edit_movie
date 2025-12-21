@@ -139,10 +139,25 @@ def load_model(
     # Extract configuration (古いモデルとの互換性のため)
     if 'config' in checkpoint:
         config = checkpoint['config']
+        
+        # max_asset_classesがconfigに含まれていない場合、state_dictから取得
+        if 'max_asset_classes' not in config:
+            state_dict = checkpoint['model_state_dict']
+            if 'asset_head.weight' in state_dict:
+                config['max_asset_classes'] = state_dict['asset_head.weight'].shape[0]
+                logger.info(f"   asset_headから検出: max_asset_classes={config['max_asset_classes']}")
+            else:
+                config['max_asset_classes'] = 10  # デフォルト
     else:
         # 古いモデルの場合、state_dictから推測
         logger.warning("⚠️  古いモデル形式を検出しました。モデル構造から設定を推測します。")
         state_dict = checkpoint['model_state_dict']
+        
+        # asset_headのサイズからmax_asset_classesを取得
+        max_asset_classes = 10  # デフォルト
+        if 'asset_head.weight' in state_dict:
+            max_asset_classes = state_dict['asset_head.weight'].shape[0]
+            logger.info(f"   asset_headから検出: max_asset_classes={max_asset_classes}")
         
         # モデルタイプを検出（マルチモーダル vs トラックオンリー）
         if 'audio_embedding.projection.weight' in state_dict:
@@ -159,7 +174,7 @@ def load_model(
                 'num_encoder_layers': 6,  # デフォルト
                 'dim_feedforward': 1024,  # デフォルト
                 'num_tracks': 20,
-                'max_asset_classes': 10,
+                'max_asset_classes': max_asset_classes,
                 'audio_features': audio_features,
                 'visual_features': visual_features,
                 'track_features': track_features,
@@ -183,7 +198,7 @@ def load_model(
                 'num_encoder_layers': 6,  # デフォルト
                 'dim_feedforward': 1024,  # デフォルト
                 'num_tracks': 20,
-                'max_asset_classes': 10,
+                'max_asset_classes': max_asset_classes,
                 'audio_features': audio_features,
                 'visual_features': visual_features,
                 'track_features': track_features,
@@ -205,7 +220,7 @@ def load_model(
                 'num_encoder_layers': 6,  # デフォルト
                 'dim_feedforward': 1024,  # デフォルト
                 'num_tracks': 20,
-                'max_asset_classes': 10,
+                'max_asset_classes': max_asset_classes,
                 'input_features': input_features
             }
             logger.info(f"   推測された設定（トラックオンリー）: input_features={input_features}, d_model={d_model}")

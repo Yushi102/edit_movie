@@ -163,23 +163,35 @@ class FeatureAligner:
         Returns:
             Tuple of (aligned_features, stats)
         """
-        # Extract numerical audio features (including text embeddings if present)
+        # Extract numerical audio features (including speaker embeddings and emotion features)
         audio_features = ['audio_energy_rms', 'audio_is_speaking', 
-                         'silence_duration_ms', 'text_is_active']
+                         'silence_duration_ms']
         
-        # Add telop_active if it exists
+        # Add speaker_id if it exists
+        if 'speaker_id' in audio_df.columns:
+            audio_features.append('speaker_id')
+        
+        # Add speaker embedding columns if they exist (192 dimensions)
+        speaker_emb_cols = [col for col in audio_df.columns if col.startswith('speaker_emb_')]
+        if speaker_emb_cols:
+            audio_features.extend(sorted(speaker_emb_cols))  # Sort to ensure consistent order
+        
+        # Add emotion features if they exist (16 dimensions)
+        emotion_features = ['pitch_f0', 'pitch_std', 'spectral_centroid', 'zcr']
+        for feat in emotion_features:
+            if feat in audio_df.columns:
+                audio_features.append(feat)
+        
+        # Add MFCC features (13 dimensions)
+        mfcc_cols = [col for col in audio_df.columns if col.startswith('mfcc_')]
+        if mfcc_cols:
+            audio_features.extend(sorted(mfcc_cols))
+        
+        # Add text/telop features
+        if 'text_is_active' in audio_df.columns:
+            audio_features.append('text_is_active')
         if 'telop_active' in audio_df.columns:
             audio_features.append('telop_active')
-        
-        # Add speech text embedding columns if they exist
-        speech_emb_cols = [col for col in audio_df.columns if col.startswith('speech_emb_')]
-        if speech_emb_cols:
-            audio_features.extend(sorted(speech_emb_cols))  # Sort to ensure consistent order
-        
-        # Add telop text embedding columns if they exist
-        telop_emb_cols = [col for col in audio_df.columns if col.startswith('telop_emb_')]
-        if telop_emb_cols:
-            audio_features.extend(sorted(telop_emb_cols))  # Sort to ensure consistent order
         
         # Verify all required features exist
         missing_features = [f for f in audio_features if f not in audio_df.columns]

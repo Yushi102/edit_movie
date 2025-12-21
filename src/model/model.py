@@ -77,10 +77,10 @@ class MultiTrackTransformer(nn.Module):
     """
     Multi-Track Transformer for video editing prediction
     
-    Predicts 12 parameters for each of 20 tracks:
+    Predicts 9 parameters for each of 20 tracks:
     - active (binary classification)
     - asset_id (classification)
-    - scale, x, y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b (regression)
+    - scale, pos_x, pos_y, crop_l, crop_r, crop_t, crop_b (regression)
     """
     
     def __init__(
@@ -124,7 +124,7 @@ class MultiTrackTransformer(nn.Module):
         )
         
         # Output heads for each parameter type
-        # Each track has 12 parameters, so we need 12 output heads
+        # Each track has 9 parameters (active, asset, scale, pos_x, pos_y, crop_l, crop_r, crop_t, crop_b)
         
         # Per-track output projection
         self.track_projection = nn.Linear(d_model, d_model)
@@ -133,7 +133,7 @@ class MultiTrackTransformer(nn.Module):
         self.active_head = nn.Linear(d_model, 2)  # Binary: active or not
         self.asset_head = nn.Linear(d_model, max_asset_classes)  # Multi-class: asset ID
         
-        # Regression heads
+        # Regression heads (12 parameters per track)
         self.scale_head = nn.Linear(d_model, 1)
         self.pos_x_head = nn.Linear(d_model, 1)
         self.pos_y_head = nn.Linear(d_model, 1)
@@ -179,9 +179,6 @@ class MultiTrackTransformer(nn.Module):
             - 'scale': (batch, seq_len, num_tracks, 1) - regression values
             - 'pos_x': (batch, seq_len, num_tracks, 1)
             - 'pos_y': (batch, seq_len, num_tracks, 1)
-            - 'anchor_x': (batch, seq_len, num_tracks, 1)
-            - 'anchor_y': (batch, seq_len, num_tracks, 1)
-            - 'rotation': (batch, seq_len, num_tracks, 1)
             - 'crop_l': (batch, seq_len, num_tracks, 1)
             - 'crop_r': (batch, seq_len, num_tracks, 1)
             - 'crop_t': (batch, seq_len, num_tracks, 1)
@@ -221,7 +218,7 @@ class MultiTrackTransformer(nn.Module):
         # Project track features
         track_features = self.track_projection(track_features)  # (batch, seq_len, num_tracks, d_model)
         
-        # Apply output heads
+        # Apply output heads (12 parameters: active, asset, scale, pos_x, pos_y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b)
         outputs = {
             'active': self.active_head(track_features),  # (batch, seq_len, num_tracks, 2)
             'asset': self.asset_head(track_features),    # (batch, seq_len, num_tracks, max_asset_classes)
@@ -397,10 +394,10 @@ class MultimodalTransformer(nn.Module):
     Extends the base MultiTrackTransformer to accept audio, visual, and track inputs,
     fusing them before processing through the transformer encoder.
     
-    Predicts 12 parameters for each of 20 tracks:
+    Predicts 9 parameters for each of 20 tracks:
     - active (binary classification)
     - asset_id (classification)
-    - scale, x, y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b (regression)
+    - scale, pos_x, pos_y, crop_l, crop_r, crop_t, crop_b (regression)
     """
     
     def __init__(
@@ -491,7 +488,7 @@ class MultimodalTransformer(nn.Module):
         self.active_head = nn.Linear(d_model, 2)
         self.asset_head = nn.Linear(d_model, max_asset_classes)
         
-        # Regression heads
+        # Regression heads (12 parameters per track)
         self.scale_head = nn.Linear(d_model, 1)
         self.pos_x_head = nn.Linear(d_model, 1)
         self.pos_y_head = nn.Linear(d_model, 1)
@@ -586,7 +583,7 @@ class MultimodalTransformer(nn.Module):
         # Project track features
         track_features = self.track_projection(track_features)  # (batch, seq_len, num_tracks, d_model)
         
-        # Apply output heads
+        # Apply output heads (12 parameters: active, asset, scale, pos_x, pos_y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b)
         outputs = {
             'active': self.active_head(track_features),
             'asset': self.asset_head(track_features),

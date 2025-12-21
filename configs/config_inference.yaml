@@ -1,0 +1,80 @@
+# Inference Configuration
+# This file contains parameters for the inference pipeline
+
+# Clip filtering parameters
+clip_filtering:
+  # Active probability threshold for track selection
+  # Lower values = more clips selected, higher values = fewer clips
+  # Default: 0.29 (model has low confidence, so threshold is low)
+  active_threshold: 0.29
+  
+  # Minimum clip duration in seconds
+  # Clips shorter than this will be filtered out
+  # Default: 3.0 seconds
+  min_clip_duration: 3.0
+  
+  # Maximum gap duration in seconds for merging clips
+  # Gaps shorter than this will be filled to merge adjacent clips
+  # Default: 2.0 seconds
+  max_gap_duration: 2.0
+  
+  # Target total duration in seconds
+  # The pipeline will try to select clips to reach this duration
+  # Default: 90.0 seconds (for 10-minute videos → 2-minute highlights)
+  target_duration: 90.0
+  
+  # Maximum total duration in seconds
+  # The pipeline will not exceed this duration
+  # Default: 150.0 seconds
+  max_duration: 150.0
+
+# Prediction smoothing parameters
+smoothing:
+  # Enable smoothing to reduce jitter in scale/position predictions
+  # Default: true
+  enabled: true
+  
+  # Smoothing method: 'moving_average', 'savgol', 'ema'
+  # - moving_average: Simple moving average (fast, but may blur motion)
+  # - savgol: Savitzky-Golay filter (preserves shape better, recommended)
+  # - ema: Exponential moving average (emphasizes recent values)
+  # Default: 'savgol'
+  method: 'savgol'
+  
+  # Window size for smoothing (number of frames)
+  # Larger values = smoother but may lose detail
+  # Must be odd for savgol filter
+  # Default: 5
+  window_size: 5
+  
+  # Polynomial order for Savitzky-Golay filter
+  # Must be less than window_size
+  # Default: 2
+  polyorder: 2
+  
+  # Alpha for exponential moving average (0-1)
+  # Smaller values = smoother
+  # Default: 0.3
+  alpha: 0.3
+
+# Feature extraction parameters
+feature_extraction:
+  # Sampling rate for feature extraction (frames per second)
+  fps: 10.0
+  
+  # CLIP feature extraction interval in seconds
+  clip_step: 1.0
+  
+  # Analysis frame width for visual features
+  analysis_width: 640
+
+# Model parameters
+model:
+  # Number of tracks
+  num_tracks: 20
+  
+  # Device: 'cpu' or 'cuda'
+  device: 'cuda'  # Will fall back to 'cpu' if CUDA is not available
+
+# Telop generation (see config_telop_generation.yaml for details)
+telop_config: configs/config_telop_generation.yaml

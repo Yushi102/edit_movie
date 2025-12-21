@@ -37,8 +37,10 @@ class PremiereXMLParser:
         self.frame_duration = 1.0 / fps
         
         # Asset ID mapping (clip name -> asset_id)
+        # For speaker-based images: dynamically assign IDs per video (1-7)
+        # Each video can have up to 7 different speakers
         self.asset_mapping = {}
-        self.next_asset_id = 0
+        self.next_speaker_id = 1  # Start from 1 (0 is reserved for graphics)
         
         # Store sequence timebase for time conversion
         self.timebase = 30.0
@@ -66,21 +68,163 @@ class PremiereXMLParser:
         except (ValueError, ZeroDivisionError):
             return 0.0
     
-    def get_asset_id(self, clip_name: str) -> int:
+    def get_speaker_base_name(self, clip_name: str) -> str:
         """
-        Get or create asset ID for a clip name
+        Extract speaker base name from clip filename
+        
+        Removes expression/emotion suffixes to get the base speaker name.
+        Example: "alice_happy.png" → "alice"
+                 "bob_sad_001.png" → "bob"
         
         Args:
             clip_name: Name of the clip/asset
         
         Returns:
-            Asset ID (0-9, wraps around if more than 10 unique assets)
+            Base speaker name
         """
-        if clip_name not in self.asset_mapping:
-            self.asset_mapping[clip_name] = self.next_asset_id % 10
-            self.next_asset_id += 1
+        import re
         
-        return self.asset_mapping[clip_name]
+        # Remove file extension
+        name = clip_name.lower()
+        name = re.sub(r'\.(png|jpg|jpeg|bmp|tif|tiff|psd)$', '', name)
+        
+        # Common expression/emotion keywords to remove
+        emotions = [
+            'happy', 'sad', 'angry', 'surprised', 'thinking', 'confused',
+            'smile', 'laugh', 'cry', 'shock', 'normal', 'neutral',
+            '笑顔', '悲しい', '怒り', '驚き', '考え中', '通常', 'ノーマル',
+            'left', 'right', 'center', '左', '右', '中央'
+        ]
+        
+        # Remove emotion suffixes (e.g., "_happy", "_001")
+        for emotion in emotions:
+            name = re.sub(f'[_-]{emotion}', '', name)
+        
+        # Remove trailing numbers (e.g., "_001", "_01")
+        name = re.sub(r'[_-]\d+$', '', name)
+        
+        return name.strip('_- ')
+    
+    def get_asset_id(self, clip_name: str, media_type: str = 'video') -> int:
+        """
+        DEPRECATED: Asset ID is no longer used for character identification.
+        
+        Character selection is now based on audio features (voice characteristics).
+        This method returns a dummy value (0) for compatibility.
+        
+        The model learns: "this voice → this character image" automatically.
+        """
+        # Return dummy value - character selection is handled by audio features
+        return 0
+    
+    def get_asset_id_legacy(self, clip_name: str, media_type: str = 'video') -> int:
+        """
+        Get asset ID based on speaker/character identification
+        
+        Optimized for 100+ speakers with ~5 speakers per video.
+        Dynamically assigns Asset IDs (1-7) per video based on appearance order.
+        
+        Args:
+            clip_name: Name of the clip/asset
+            media_type: 'video', 'image', or 'graphic'
+        
+        Returns:
+            Asset ID (0-9) based on speaker/character
+        """
+        clip_lower = clip_name.lower()
+        
+        # Graphics/Text (0)
+        if media_type == 'graphic':
+            return 0  # All graphics (title, telops, etc.)
+        
+        # Character Images - Dynamic speaker assignment (1-7)
+        elif media_type == 'image':
+            # Background images
+            if 'background' in clip_lower or 'bg' in clip_lower or '背景' in clip_lower:
+                return 8  # Background
+            
+            # Logo/Overlay
+            if 'logo' in clip_lower or 'ロゴ' in clip_lower or 'overlay' in clip_lower:
+                return 9  # Logo/Overlay
+            
+            # Extract speaker base name (remove expressions like "_happy", "_sad")
+            speaker_name = self.get_speaker_base_name(clip_name)
+            
+            # Check if this speaker already has an ID
+            if speaker_name in self.asset_mapping:
+                return self.asset_mapping[speaker_name]
+            
+            # Assign new ID if we haven't reached the limit
+            if self.next_speaker_id <= 7:
+                asset_id = self.next_speaker_id
+                self.asset_mapping[speaker_name] = asset_id
+                self.next_speaker_id += 1
+                logger.debug(f"  New speaker: '{speaker_name}' → Asset ID {asset_id}")
+                return asset_id
+            else:
+                # If more than 7 speakers, wrap around (shouldn't happen often)
+                logger.warning(f"  More than 7 speakers in video! '{speaker_name}' → Asset ID 7")
+                return 7
+        
+        # Videos (9)
+        else:  # media_type == 'video'
+            return 9  # All videos
+        
+        # Note: This classification dynamically assigns Asset IDs per video
+        # Example for one video:
+        #   alice_happy.png, alice_sad.png → Asset ID 1
+        #   bob_normal.png, bob_angry.png → Asset ID 2
+        #   carol_smile.png → Asset ID 3
+        # Example for another video (different speakers):
+        #   dave_happy.png → Asset ID 1 (reused for different video)
+        #   eve_sad.png → Asset ID 2
+    
+    def get_media_type(self, clipitem: ET.Element) -> str:
+        """
+        Determine media type (video, image, graphic) from clipitem
+        
+        Args:
+            clipitem: XML element representing a clip item
+        
+        Returns:
+            Media type: 'video', 'image', or 'graphic'
+        """
+        # Check mediaSource
+        media_source = clipitem.find('.//mediaSource')
+        if media_source is not None and media_source.text:
+            if 'Graphic' in media_source.text:
+                return 'graphic'
+        
+        # Check effect category
+        for effect in clipitem.findall('.//effect'):
+            effect_category = effect.find('effectcategory')
+            if effect_category is not None and effect_category.text == 'graphic':
+                return 'graphic'
+        
+        # Check file extension from pathurl
+        pathurl = clipitem.find('.//file/pathurl')
+        if pathurl is not None and pathurl.text:
+            path_lower = pathurl.text.lower()
+            # Video extensions
+            if any(ext in path_lower for ext in ['.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv']):
+                return 'video'
+            # Image extensions
+            if any(ext in path_lower for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.psd']):
+                return 'image'
+        
+        # Check duration - images typically have very long or infinite duration
+        duration_elem = clipitem.find('.//file/duration')
+        if duration_elem is not None and duration_elem.text:
+            try:
+                duration_frames = int(duration_elem.text)
+                # If duration is extremely long (>1 hour at 30fps = 108000 frames), likely an image
+                if duration_frames > 108000:
+                    return 'image'
+            except ValueError:
+                pass
+        
+        # Default to video
+        return 'video'
     
     def extract_clip_info(self, clipitem: ET.Element, track_index: int) -> Dict:
         """
@@ -97,6 +241,9 @@ class PremiereXMLParser:
         name_elem = clipitem.find('name')
         clip_name = name_elem.text if name_elem is not None and name_elem.text else f'clip_{track_index}'
         
+        # Determine media type
+        media_type = self.get_media_type(clipitem)
+        
         # Get timing information
         start_elem = clipitem.find('start')
         end_elem = clipitem.find('end')
@@ -111,14 +258,19 @@ class PremiereXMLParser:
         duration = end_time - start_time
         source_duration = source_end - source_start
         
-        # Get asset ID
-        asset_id = self.get_asset_id(clip_name)
+        # Get asset ID based on media type
+        asset_id = self.get_asset_id(clip_name, media_type)
         
         # Check if clip is enabled
         enabled_elem = clipitem.find('enabled')
         enabled = enabled_elem is None or enabled_elem.text != 'FALSE'
         
         # Extract transform parameters (scale, position, anchor, rotation)
+        # Note: Different media types support different parameters
+        # - Video: All parameters (scale, position, anchor, rotation, crop)
+        # - Image: All parameters (scale, position, anchor, rotation, crop)
+        # - Graphic: Position and scale only (no crop, limited rotation)
+        
         scale = 1.0
         pos_x = 0.0
         pos_y = 0.0
@@ -129,6 +281,11 @@ class PremiereXMLParser:
         # Track keyframe information
         has_keyframes = False
         keyframe_times = []
+        
+        # Determine which parameters are applicable for this media type
+        supports_crop = media_type in ['video', 'image']
+        supports_rotation = media_type in ['video', 'image']
+        supports_anchor = media_type in ['video', 'image']
         
         # Look for filter effects (motion, transform)
         for effect in clipitem.findall('.//effect'):
@@ -166,12 +323,14 @@ class PremiereXMLParser:
                                     if 'scale' in param_id:
                                         scale = value / 100.0  # Premiere uses percentage
                                     elif 'rotation' in param_id or 'angle' in param_id:
-                                        rotation = value  # Degrees
+                                        if supports_rotation:
+                                            rotation = value  # Degrees
                                     elif 'anchor' in param_id:
-                                        if 'horizontal' in param_id or 'x' in param_id:
-                                            anchor_x = value
-                                        elif 'vertical' in param_id or 'y' in param_id:
-                                            anchor_y = value
+                                        if supports_anchor:
+                                            if 'horizontal' in param_id or 'x' in param_id:
+                                                anchor_x = value
+                                            elif 'vertical' in param_id or 'y' in param_id:
+                                                anchor_y = value
                                     elif 'position' in param_id:
                                         if 'horizontal' in param_id or 'x' in param_id:
                                             pos_x = value
@@ -180,37 +339,38 @@ class PremiereXMLParser:
                                 except (ValueError, TypeError):
                                     pass
         
-        # Extract crop parameters
+        # Extract crop parameters (only for video and image, not graphics)
         crop_l = 0.0
         crop_r = 0.0
         crop_t = 0.0
         crop_b = 0.0
         
-        for effect in clipitem.findall('.//effect'):
-            effect_name_elem = effect.find('name')
-            if effect_name_elem is not None:
-                effect_name = effect_name_elem.text.lower() if effect_name_elem.text else ''
-                
-                if 'crop' in effect_name:
-                    for param in effect.findall('.//parameter'):
-                        param_id_elem = param.find('parameterid')
-                        value_elem = param.find('.//value')
-                        
-                        if param_id_elem is not None and value_elem is not None:
-                            param_id = param_id_elem.text.lower() if param_id_elem.text else ''
+        if supports_crop:
+            for effect in clipitem.findall('.//effect'):
+                effect_name_elem = effect.find('name')
+                if effect_name_elem is not None:
+                    effect_name = effect_name_elem.text.lower() if effect_name_elem.text else ''
+                    
+                    if 'crop' in effect_name:
+                        for param in effect.findall('.//parameter'):
+                            param_id_elem = param.find('parameterid')
+                            value_elem = param.find('.//value')
                             
-                            try:
-                                value = float(value_elem.text)
-                                if 'left' in param_id:
-                                    crop_l = value
-                                elif 'right' in param_id:
-                                    crop_r = value
-                                elif 'top' in param_id:
-                                    crop_t = value
-                                elif 'bottom' in param_id:
-                                    crop_b = value
-                            except (ValueError, TypeError):
-                                pass
+                            if param_id_elem is not None and value_elem is not None:
+                                param_id = param_id_elem.text.lower() if param_id_elem.text else ''
+                                
+                                try:
+                                    value = float(value_elem.text)
+                                    if 'left' in param_id:
+                                        crop_l = value
+                                    elif 'right' in param_id:
+                                        crop_r = value
+                                    elif 'top' in param_id:
+                                        crop_t = value
+                                    elif 'bottom' in param_id:
+                                        crop_b = value
+                                except (ValueError, TypeError):
+                                    pass
         
         # Extract text/graphics content (from title clips)
         text_content = []
@@ -233,6 +393,7 @@ class PremiereXMLParser:
             'end_time': end_time,
             'duration': duration,
             'asset_id': asset_id,
+            'media_type': media_type,  # 'video', 'image', or 'graphic'
             'scale': scale,
             'pos_x': pos_x,
             'pos_y': pos_y,
@@ -358,7 +519,14 @@ class PremiereXMLParser:
                 sequence[t, track_idx, 10] = clip['crop_t']
                 sequence[t, track_idx, 11] = clip['crop_b']
         
+        # Log media type statistics
+        media_type_counts = {'video': 0, 'image': 0, 'graphic': 0}
+        for clip in clips:
+            media_type = clip.get('media_type', 'video')
+            media_type_counts[media_type] = media_type_counts.get(media_type, 0) + 1
+        
         logger.info(f"Created sequence: shape={sequence.shape}")
+        logger.info(f"  Media types: Video={media_type_counts['video']}, Image={media_type_counts['image']}, Graphic={media_type_counts['graphic']}")
         return sequence
     
     def save_sequence(self, sequence: np.ndarray, output_path: str, video_id: str):
@@ -416,6 +584,7 @@ class PremiereXMLParser:
                 # Find matching clip for this timestep and track
                 clip_name = ''
                 clip_ref = ''
+                media_type = 'video'
                 enabled = True
                 source_start = 0.0
                 source_duration = 0.0
@@ -429,6 +598,7 @@ class PremiereXMLParser:
                             clip['start_time'] <= time < clip['end_time']):
                             clip_name = clip['clip_name']
                             clip_ref = clip.get('clip_ref', '')
+                            media_type = clip.get('media_type', 'video')
                             enabled = clip.get('enabled', True)
                             source_start = clip.get('source_start', 0.0)
                             source_duration = clip.get('source_duration', 0.0)
@@ -445,6 +615,7 @@ class PremiereXMLParser:
                     'asset_id': int(params[1]),
                     'clip_name': clip_name,
                     'clip_ref': clip_ref,
+                    'media_type': media_type,  # 'video', 'image', or 'graphic'
                     'enabled': enabled,
                     'source_start': source_start,
                     'source_duration': source_duration,

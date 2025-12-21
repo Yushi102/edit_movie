@@ -38,17 +38,31 @@ def create_premiere_xml_direct(
     if ai_telops is None:
         ai_telops = []
     
-    # 元動画のFPSを取得
+    # 元動画のFPS・解像度を取得
     import cv2
     cap = cv2.VideoCapture(video_path)
     video_fps = 60.0  # デフォルト
+    video_width = 1080  # デフォルト
+    video_height = 1920  # デフォルト
+    
     if cap.isOpened():
         video_fps = cap.get(cv2.CAP_PROP_FPS)
         if video_fps <= 0:
             video_fps = 60.0
+        
+        # 解像度を取得
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        if width > 0 and height > 0:
+            video_width = width
+            video_height = height
+        
         cap.release()
     
-    logger.info(f"  Video FPS: {video_fps}, Inference FPS: {fps}")
+    logger.info(f"  Video properties: {video_width}x{video_height} @ {video_fps}fps")
+    
+
     
     # FPS変換比率
     fps_ratio = video_fps / fps
@@ -207,8 +221,8 @@ def create_premiere_xml_direct(
                 clipitem_lines.append(f'\t\t\t\t\t\t\t\t\t\t\t<timebase>{int(video_fps)-1}</timebase>')
                 clipitem_lines.append(f'\t\t\t\t\t\t\t\t\t\t\t<ntsc>{ntsc}</ntsc>')
                 clipitem_lines.append('\t\t\t\t\t\t\t\t\t\t</rate>')
-                clipitem_lines.append('\t\t\t\t\t\t\t\t\t\t<width>1080</width>')
-                clipitem_lines.append('\t\t\t\t\t\t\t\t\t\t<height>1920</height>')
+                clipitem_lines.append(f'\t\t\t\t\t\t\t\t\t\t<width>{video_width}</width>')
+                clipitem_lines.append(f'\t\t\t\t\t\t\t\t\t\t<height>{video_height}</height>')
                 clipitem_lines.append('\t\t\t\t\t\t\t\t\t\t<anamorphic>FALSE</anamorphic>')
                 clipitem_lines.append('\t\t\t\t\t\t\t\t\t\t<pixelaspectratio>square</pixelaspectratio>')
                 clipitem_lines.append('\t\t\t\t\t\t\t\t\t\t<fielddominance>none</fielddominance>')

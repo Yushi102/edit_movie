@@ -108,6 +108,11 @@ class FeatureExtractor:
         except Exception as e:
             print(f"  ⚠ MediaPipe initialization failed: {e}")
             print("  Continuing without face detection...")
+            print("  Face features will be set to default values (zeros)")
+            print("  Common causes:")
+            print("    - Non-ASCII characters in project path (日本語など)")
+            print("    - Missing dependencies: pip install mediapipe opencv-contrib-python")
+            print("  To fix path issue: Move project to ASCII-only path")
             self.face_mesh = None
         print("All models loaded!\n")
     

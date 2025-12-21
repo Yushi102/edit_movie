@@ -28,6 +28,108 @@ logger = logging.getLogger(__name__)
 class InferencePipeline:
     """動画編集推論パイプライン"""
     
+    def _load_inference_config(self, config_path: str = None, model_dir: Path = None) -> dict:
+        """
+        推論設定をロードする
+        
+        優先順位:
+        1. 明示的に指定された設定ファイル (config_path)
+        2. モデルと一緒に保存された最適化パラメータ (model_dir/inference_params.yaml)
+        3. デフォルトの設定ファイル (configs/config_inference.yaml)
+        4. ハードコードされたデフォルト値
+        
+        Args:
+            config_path: 設定ファイルのパス（Noneの場合は自動検出）
+            model_dir: モデルディレクトリ（最適化パラメータの検索用）
+        
+        Returns:
+            設定の辞書
+        """
+        # デフォルト値
+        default_config = {
+            'clip_filtering': {
+                'active_threshold': 0.29,
+                'min_clip_duration': 3.0,
+                'max_gap_duration': 2.0,
+                'target_duration': 90.0,
+                'max_duration': 150.0
+            },
+            'smoothing': {
+                'enabled': True,
+                'method': 'savgol',
+                'window_size': 5,
+                'polyorder': 2,
+                'alpha': 0.3
+            }
+        }
+        
+        loaded_from = "default values"
+        
+        # 優先順位1: 明示的に指定された設定ファイル
+        if config_path is not None and Path(config_path).exists():
+            try:
+                import yaml
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    loaded_config = yaml.safe_load(f)
+                
+                if loaded_config:
+                    if 'clip_filtering' in loaded_config:
+                        default_config['clip_filtering'].update(loaded_config['clip_filtering'])
+                    if 'smoothing' in loaded_config:
+                        default_config['smoothing'].update(loaded_config['smoothing'])
+                
+                loaded_from = f"config file: {config_path}"
+            except Exception as e:
+                logger.warning(f"Failed to load inference config from {config_path}: {e}")
+        
+        # 優先順位2: モデルと一緒に保存された最適化パラメータ
+        elif model_dir is not None:
+            optimized_params_path = model_dir / 'inference_params.yaml'
+            if optimized_params_path.exists():
+                try:
+                    import yaml
+                    with open(optimized_params_path, 'r', encoding='utf-8') as f:
+                        optimized_params = yaml.safe_load(f)
+                    
+                    if optimized_params:
+                        # 最適化パラメータを直接使用（キー名が異なる場合があるので変換）
+                        param_mapping = {
+                            'active_threshold': 'active_threshold',
+                            'min_duration': 'min_clip_duration',
+                            'max_gap': 'max_gap_duration',
+                            'target_duration': 'target_duration',
+                            'max_duration': 'max_duration'
+                        }
+                        
+                        for old_key, new_key in param_mapping.items():
+                            if old_key in optimized_params:
+                                default_config['clip_filtering'][new_key] = optimized_params[old_key]
+                        
+                        loaded_from = f"optimized parameters: {optimized_params_path}"
+                        logger.info(f"✅ Loaded optimized inference parameters from training")
+                except Exception as e:
+                    logger.warning(f"Failed to load optimized parameters from {optimized_params_path}: {e}")
+        
+        # 優先順位3: デフォルトの設定ファイル
+        if loaded_from == "default values":
+            default_config_path = 'configs/config_inference.yaml'
+            if Path(default_config_path).exists():
+                try:
+                    import yaml
+                    with open(default_config_path, 'r', encoding='utf-8') as f:
+                        loaded_config = yaml.safe_load(f)
+                    
+                    if loaded_config and 'clip_filtering' in loaded_config:
+                        default_config['clip_filtering'].update(loaded_config['clip_filtering'])
+                    
+                    loaded_from = f"default config file: {default_config_path}"
+                except Exception as e:
+                    logger.warning(f"Failed to load default config from {default_config_path}: {e}")
+        
+        logger.info(f"Inference parameters loaded from: {loaded_from}")
+        
+        return default_config
+    
     def __init__(
         self,
         model_path: str,
@@ -36,7 +138,8 @@ class InferencePipeline:
         num_tracks: int = 20,
         audio_preprocessor_path: str = None,
         visual_preprocessor_path: str = None,
-        telop_config_path: str = None
+        telop_config_path: str = None,
+        inference_config_path: str = None
     ):
         """
         初期化
@@ -49,8 +152,15 @@ class InferencePipeline:
             audio_preprocessor_path: 音声前処理器のパス（Noneの場合は自動検出）
             visual_preprocessor_path: 映像前処理器のパス（Noneの場合は自動検出）
             telop_config_path: テロップ生成設定ファイルのパス（Noneの場合はデフォルト）
+            inference_config_path: 推論設定ファイルのパス（Noneの場合はデフォルト値を使用）
         """
         self.device = device
+        
+        # モデルディレクトリを取得（最適化パラメータの検索用）
+        model_dir = Path(model_path).parent
+        
+        # 推論設定をロード（モデルと一緒に保存された最適化パラメータを優先）
+        self.inference_config = self._load_inference_config(inference_config_path, model_dir)
         
         # テロップ生成設定をロード
         self.telop_config = load_telop_config(telop_config_path)
@@ -203,25 +313,39 @@ class InferencePipeline:
                 raise FileNotFoundError(f"特徴量抽出に失敗しました: {output_path}")
         
         # 音声特徴量と映像特徴量に分割
-        # 音声: time, audio_energy_rms, audio_is_speaking, silence_duration_ms, text_is_active, text_word, 
-        #       telop_active, telop_text, speech_emb_0~5, telop_emb_0~5
+        # 音声: time, audio_energy_rms, audio_is_speaking, silence_duration_ms, speaker_id,
+        #       speaker_emb_0~191 (192次元), pitch_f0, pitch_std, spectral_centroid, zcr, mfcc_0~12 (13次元),
+        #       text_is_active, telop_active
         # 映像: scene_change, visual_motion, saliency_x, saliency_y, face_count, face_center_x, face_center_y, 
         #       face_size, face_mouth_open, face_eyebrow_raise, clip_0~clip_511
         
         # 基本音声特徴量
-        audio_base_cols = ['time', 'audio_energy_rms', 'audio_is_speaking', 'silence_duration_ms', 'text_is_active']
+        audio_base_cols = ['time', 'audio_energy_rms', 'audio_is_speaking', 'silence_duration_ms']
         
-        # テロップ関連
+        # speaker_id
+        if 'speaker_id' in df_all.columns:
+            audio_base_cols.append('speaker_id')
+        
+        # 話者埋め込み（192次元）
+        speaker_emb_cols = [f'speaker_emb_{i}' for i in range(192) if f'speaker_emb_{i}' in df_all.columns]
+        
+        # 感情特徴（16次元）
+        emotion_cols = []
+        if 'pitch_f0' in df_all.columns:
+            emotion_cols.extend(['pitch_f0', 'pitch_std', 'spectral_centroid', 'zcr'])
+        mfcc_cols = [f'mfcc_{i}' for i in range(13) if f'mfcc_{i}' in df_all.columns]
+        emotion_cols.extend(mfcc_cols)
+        
+        # テキスト・テロップ
+        text_cols = []
+        if 'text_is_active' in df_all.columns:
+            text_cols.append('text_is_active')
         if 'telop_active' in df_all.columns:
-            audio_base_cols.append('telop_active')
+            text_cols.append('telop_active')
         
-        # テキスト埋め込み（音声認識）
-        speech_emb_cols = [f'speech_emb_{i}' for i in range(6) if f'speech_emb_{i}' in df_all.columns]
+        audio_cols = audio_base_cols + speaker_emb_cols + emotion_cols + text_cols
         
-        # テキスト埋め込み（テロップ）
-        telop_emb_cols = [f'telop_emb_{i}' for i in range(6) if f'telop_emb_{i}' in df_all.columns]
-        
-        audio_cols = audio_base_cols + speech_emb_cols + telop_emb_cols
+        logger.info(f"  デバッグ: audio_base_cols={len(audio_base_cols)}, speaker_emb_cols={len(speaker_emb_cols)}, emotion_cols={len(emotion_cols)}, text_cols={len(text_cols)}")
         
         # 映像特徴量
         visual_cols = ['time', 'scene_change', 'visual_motion', 'saliency_x', 'saliency_y', 
@@ -234,34 +358,6 @@ class InferencePipeline:
         
         audio_df = df_all[audio_cols].copy()
         visual_df = df_all[visual_cols].copy()
-        
-        # テキスト埋め込みが不足している場合は追加
-        if 'speech_emb_0' not in audio_df.columns or 'telop_emb_0' not in audio_df.columns:
-            logger.info(f"  テキスト埋め込みを生成中...")
-            from src.data_preparation.text_embedding import SimpleTextEmbedder
-            embedder = SimpleTextEmbedder()
-            
-            # 音声認識のテキスト埋め込み
-            if 'text_word' in audio_df.columns:
-                speech_embeddings = audio_df['text_word'].apply(
-                    lambda x: embedder.embed(x if pd.notna(x) else "")
-                )
-                for i in range(6):
-                    audio_df[f'speech_emb_{i}'] = speech_embeddings.apply(lambda e: e[i])
-            else:
-                for i in range(6):
-                    audio_df[f'speech_emb_{i}'] = 0.0
-            
-            # テロップのテキスト埋め込み
-            if 'telop_text' in audio_df.columns:
-                telop_embeddings = audio_df['telop_text'].apply(
-                    lambda x: embedder.embed(x if pd.notna(x) else "")
-                )
-                for i in range(6):
-                    audio_df[f'telop_emb_{i}'] = telop_embeddings.apply(lambda e: e[i])
-            else:
-                for i in range(6):
-                    audio_df[f'telop_emb_{i}'] = 0.0
         
         logger.info(f"  音声特徴量: {len(audio_df)} timesteps, {audio_df.shape[1]-1} features")
         logger.info(f"  映像特徴量: {len(visual_df)} timesteps, {len(visual_cols)-1} features")
@@ -363,6 +459,133 @@ class InferencePipeline:
         
         return features
     
+    def _determine_media_type(self, video_path: str) -> str:
+        """
+        入力動画のメディアタイプを判別
+        
+        Args:
+            video_path: 動画ファイルのパス
+        
+        Returns:
+            'video' or 'image'
+        """
+        import cv2
+        
+        # ファイル拡張子で判別
+        path_lower = video_path.lower()
+        if any(ext in path_lower for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.psd']):
+            return 'image'
+        
+        # 動画の場合、フレーム数で判別（静止画として使われている可能性）
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                duration = frame_count / fps if fps > 0 else 0
+                cap.release()
+                
+                # 極端に長い場合は静止画として扱われている可能性
+                # （1時間以上 = 3600秒）
+                if duration > 3600:
+                    logger.info(f"  Video duration is very long ({duration:.1f}s), treating as image")
+                    return 'image'
+        except Exception as e:
+            logger.warning(f"  Failed to determine media type: {e}")
+        
+        return 'video'
+    
+    def _infer_media_type_from_predictions(
+        self,
+        predictions: Dict[str, np.ndarray],
+        track_idx: int,
+        start_frame: int,
+        end_frame: int
+    ) -> str:
+        """
+        予測値からメディアタイプを推定
+        
+        Args:
+            predictions: モデルの予測結果
+            track_idx: トラックインデックス
+            start_frame: 開始フレーム
+            end_frame: 終了フレーム
+        
+        Returns:
+            'video', 'image', or 'graphic'
+        """
+        # 予測されたパラメータの特徴からメディアタイプを推定
+        
+        # Cropが全て0に近い場合 → Graphic の可能性
+        crop_values = []
+        for key in ['crop_l', 'crop_r', 'crop_t', 'crop_b']:
+            if key in predictions:
+                crop_values.extend(predictions[key][start_frame:end_frame+1, track_idx].flatten())
+        
+        if crop_values:
+            avg_crop = np.mean(np.abs(crop_values))
+            if avg_crop < 0.01:  # ほぼ0
+                # Rotationもチェック
+                if 'rotation' in predictions:
+                    avg_rotation = np.mean(np.abs(predictions['rotation'][start_frame:end_frame+1, track_idx]))
+                    if avg_rotation < 1.0:  # 1度未満
+                        return 'graphic'
+        
+        # Scaleが1.0に近く、動きが少ない場合 → Image の可能性
+        if 'scale' in predictions:
+            scale_values = predictions['scale'][start_frame:end_frame+1, track_idx]
+            scale_variance = np.var(scale_values)
+            if scale_variance < 0.001:  # ほとんど変化しない
+                return 'image'
+        
+        # デフォルトはVideo
+        return 'video'
+    
+    def _apply_media_type_constraints(
+        self, 
+        predictions: Dict[str, np.ndarray], 
+        media_type: str,
+        track_idx: int = None
+    ) -> Dict[str, np.ndarray]:
+        """
+        メディアタイプに応じて予測値に制約を適用
+        
+        Args:
+            predictions: モデルの予測結果
+            media_type: 'video', 'image', or 'graphic'
+            track_idx: 特定のトラックのみに適用する場合（Noneの場合は全トラック）
+        
+        Returns:
+            制約を適用した予測結果
+        """
+        # Graphicの場合: crop, rotation, anchorを無効化
+        if media_type == 'graphic':
+            logger.info(f"  Applying graphic constraints (no crop/rotation/anchor) to track {track_idx if track_idx is not None else 'all'}")
+            
+            if track_idx is not None:
+                # 特定のトラックのみ
+                predictions['rotation'][:, track_idx] = 0.0
+                predictions['anchor_x'][:, track_idx] = 0.0
+                predictions['anchor_y'][:, track_idx] = 0.0
+                predictions['crop_l'][:, track_idx] = 0.0
+                predictions['crop_r'][:, track_idx] = 0.0
+                predictions['crop_t'][:, track_idx] = 0.0
+                predictions['crop_b'][:, track_idx] = 0.0
+            else:
+                # 全トラック
+                predictions['rotation'] = np.zeros_like(predictions['rotation'])
+                predictions['anchor_x'] = np.zeros_like(predictions['anchor_x'])
+                predictions['anchor_y'] = np.zeros_like(predictions['anchor_y'])
+                predictions['crop_l'] = np.zeros_like(predictions['crop_l'])
+                predictions['crop_r'] = np.zeros_like(predictions['crop_r'])
+                predictions['crop_t'] = np.zeros_like(predictions['crop_t'])
+                predictions['crop_b'] = np.zeros_like(predictions['crop_b'])
+        
+        # Video/Imageの場合: 全パラメータ有効（制約なし）
+        # ただし、将来的にVideo専用/Image専用の制約を追加可能
+        
+        return predictions
+    
     def _predict_with_model(self, features: Dict[str, torch.Tensor]) -> Dict[str, np.ndarray]:
         """
         モデルで編集パラメータを予測
@@ -417,6 +640,38 @@ class InferencePipeline:
                 logger.warning(f"  ⚠️  {key} contains NaN values!")
             if np.isinf(predictions[key]).any():
                 logger.warning(f"  ⚠️  {key} contains Inf values!")
+        
+        # 入力動画の基本メディアタイプを判別（参考情報）
+        base_media_type = self._determine_media_type(self.video_path)
+        logger.info(f"  Base media type: {base_media_type}")
+        
+        # トラックごとにメディアタイプを推定して制約を適用
+        # （実際の編集では、トラックごとに異なる素材が使われる可能性がある）
+        seq_len = predictions['active'].shape[0]
+        num_tracks = predictions['active'].shape[1]
+        
+        logger.info(f"  Inferring media type for each track and applying constraints...")
+        for track_idx in range(num_tracks):
+            # このトラックがアクティブな期間を探す
+            active_frames = np.where(predictions['active'][:, track_idx, 1] > 0.5)[0]
+            
+            if len(active_frames) > 0:
+                start_frame = active_frames[0]
+                end_frame = active_frames[-1]
+                
+                # 予測値からメディアタイプを推定
+                inferred_type = self._infer_media_type_from_predictions(
+                    predictions, track_idx, start_frame, end_frame
+                )
+                
+                # Graphicの場合のみ制約を適用
+                if inferred_type == 'graphic':
+                    logger.debug(f"    Track {track_idx}: {inferred_type} (applying constraints)")
+                    predictions = self._apply_media_type_constraints(
+                        predictions, inferred_type, track_idx
+                    )
+        
+        return predictions
     
     def _predict_with_chunks(self, features: Dict[str, torch.Tensor], chunk_size: int) -> Dict[str, np.ndarray]:
         """
@@ -1069,13 +1324,18 @@ class InferencePipeline:
         import scipy.special
         active_probs = scipy.special.softmax(predictions['active'], axis=-1)[:, :, 1]  # (seq_len, num_tracks)
         
+        # 設定から閾値を取得
+        active_threshold = self.inference_config['clip_filtering']['active_threshold']
+        
         # 各フレームで最もアクティブなトラックを選択（重複を防ぐ）
-        # 閾値0.29を超えるトラックの中から、最も確率が高いものを選択
+        # 閾値を超えるトラックの中から、最も確率が高いものを選択
         best_track_per_frame = np.full(seq_len, -1, dtype=int)  # -1 = どのトラックもアクティブでない
+        
+        logger.info(f"  Using active threshold: {active_threshold}")
         
         for t in range(seq_len):
             # このフレームで閾値を超えるトラックを探す
-            active_tracks = np.where(active_probs[t, :] > 0.29)[0]
+            active_tracks = np.where(active_probs[t, :] > active_threshold)[0]
             if len(active_tracks) > 0:
                 # 最も確率が高いトラックを選択
                 best_track = active_tracks[np.argmax(active_probs[t, active_tracks])]
@@ -1142,7 +1402,7 @@ class InferencePipeline:
         
         # 短いギャップを埋めてクリップを結合
         if len(tracks_data) > 1:
-            max_gap_duration = 2.0  # 最大ギャップ: 2.0秒
+            max_gap_duration = self.inference_config['clip_filtering']['max_gap_duration']
             merged_tracks = []
             i = 0
             
@@ -1171,7 +1431,7 @@ class InferencePipeline:
             tracks_data = merged_tracks
         
         # 最小継続時間でフィルタリング（ギャップ結合後）
-        min_clip_duration = 3.0  # 最小継続時間: 3.0秒
+        min_clip_duration = self.inference_config['clip_filtering']['min_clip_duration']
         filtered_tracks = []
         
         for track in tracks_data:
@@ -1188,8 +1448,8 @@ class InferencePipeline:
             tracks_data = filtered_tracks
         
         # 優先順位をつけて合計時間を制限
-        target_duration = 90.0  # 目標: 90秒
-        max_duration = 150.0    # 最大: 150秒
+        target_duration = self.inference_config['clip_filtering']['target_duration']
+        max_duration = self.inference_config['clip_filtering']['max_duration']
         
         if len(tracks_data) > 0:
             # 各クリップの継続時間を計算
@@ -1247,6 +1507,19 @@ class InferencePipeline:
         logger.info(f"    Values > 0.1: {(active_probs > 0.1).sum()} / {active_probs.size}")
         
         logger.info(f"  Detected {len(tracks_data)} active track segments")
+        
+        # 予測値を平滑化（ジッター軽減）
+        if self.inference_config['smoothing']['enabled'] and len(tracks_data) > 0:
+            logger.info("  Applying prediction smoothing to reduce jitter...")
+            from src.inference.smoothing import smooth_predictions_for_xml
+            
+            tracks_data = smooth_predictions_for_xml(
+                predictions=predictions,
+                tracks_data=tracks_data,
+                method=self.inference_config['smoothing']['method'],
+                window_size=self.inference_config['smoothing']['window_size']
+            )
+            logger.info(f"  ✅ Smoothing applied using {self.inference_config['smoothing']['method']} filter")
         
         # テロップ情報を抽出（OCR）- 設定で無効化されている場合はスキップ
         telops = []

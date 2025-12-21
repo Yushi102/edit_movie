@@ -118,12 +118,32 @@ def main(args):
             max_asset_classes=config.get('max_asset_classes', 10)
         )
     
+    # Analyze class balance and adjust weights if requested
+    if config.get('auto_balance_weights', False):
+        logger.info("\nAnalyzing class balance to adjust loss weights...")
+        from src.training.class_balance_analyzer import analyze_and_save_weights
+        
+        checkpoint_dir = Path(config.get('checkpoint_dir', 'checkpoints'))
+        recommended_weights = analyze_and_save_weights(
+            train_data_path=config['train_data'],
+            output_path=checkpoint_dir / 'recommended_weights.yaml',
+            num_tracks=config.get('num_tracks', 20)
+        )
+        
+        # 設定を更新（ユーザー指定の値を優先）
+        for key in ['active_weight', 'asset_weight', 'scale_weight', 'position_weight', 'rotation_weight', 'crop_weight']:
+            if key not in config or config.get('auto_balance_weights', False):
+                config[key] = recommended_weights[key]
+        
+        logger.info("\n✅ Using recommended weights based on class balance analysis")
+    
     # Create loss function
     logger.info("\nCreating loss function...")
     loss_fn = MultiTrackLoss(
         active_weight=config.get('active_weight', 1.0),
         asset_weight=config.get('asset_weight', 1.0),
         scale_weight=config.get('scale_weight', 1.0),
+        label_smoothing=config.get('label_smoothing', 0.0),
         position_weight=config.get('position_weight', 1.0),
         rotation_weight=config.get('rotation_weight', 1.0),
         crop_weight=config.get('crop_weight', 1.0),
@@ -163,7 +183,8 @@ def main(args):
         scheduler=scheduler,
         gradient_clipper=gradient_clipper,
         device=device,
-        checkpoint_dir=config.get('checkpoint_dir', 'checkpoints')
+        checkpoint_dir=config.get('checkpoint_dir', 'checkpoints'),
+        use_amp=config.get('use_amp', True)  # Enable mixed precision by default
     )
     
     # Load checkpoint if resuming
@@ -182,21 +203,36 @@ def main(args):
         early_stopping_patience=config.get('early_stopping_patience')
     )
     
+    # Optimize inference parameters on validation data
+    logger.info("\nOptimizing inference parameters on validation data...")
+    from src.training.parameter_optimizer import optimize_and_save_parameters
+    
+    checkpoint_dir = Path(config.get('checkpoint_dir', 'checkpoints'))
+    optimal_params = optimize_and_save_parameters(
+        model=model,
+        val_loader=val_loader,
+        device=device,
+        output_path=checkpoint_dir / 'inference_params.yaml',
+        fps=config.get('fps', 10.0)
+    )
+    
     # Save final model
     logger.info("\nSaving final model...")
     save_model(
         model=model,
-        save_path=Path(config.get('checkpoint_dir', 'checkpoints')) / 'final_model.pth',
+        save_path=checkpoint_dir / 'final_model.pth',
         metadata={
             'config': config,
             'best_val_loss': pipeline.best_val_loss,
-            'best_epoch': pipeline.best_epoch
+            'best_epoch': pipeline.best_epoch,
+            'inference_params': optimal_params  # 最適化されたパラメータも保存
         },
         optimizer=optimizer,
         metrics=pipeline.history
     )
     
     logger.info("\n✅ Training complete!")
+    logger.info(f"Optimized inference parameters saved to: {checkpoint_dir / 'inference_params.yaml'}")
 
 
 if __name__ == "__main__":
