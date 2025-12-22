@@ -122,6 +122,7 @@ class CombinedCutSelectionLoss(nn.Module):
     Combines:
     1. CrossEntropy loss (for classification)
     2. Total Variation loss (for temporal smoothness)
+    3. Adoption Rate Penalty (to prevent over-prediction of active class)
     """
     
     def __init__(
@@ -184,7 +185,7 @@ class CombinedCutSelectionLoss(nn.Module):
         # Temporal smoothness loss
         tv_loss = self.tv_loss(predictions)
         
-        # Total loss
+        # Total loss (adoption rate penalty removed - was causing negative loss)
         total_loss = ce_loss + tv_loss
         
         # Return loss components for logging

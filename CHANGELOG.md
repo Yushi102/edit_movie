@@ -1,5 +1,74 @@
 # Changelog
 
+## [2025-12-22] - K-Fold Cross Validation完了と最終最適化
+
+### 🎯 主な変更
+- K-Fold Cross Validation（5分割）の実装と完了
+- データリーク防止（GroupKFold）の実装
+- 損失関数の最適化（採用率ペナルティの削除）
+- メトリクス計算の修正（全メトリクスで最適閾値を使用）
+- 可視化の改善（CE Loss vs TV Loss グラフの修正）
+
+### ✅ 最終性能（K-Fold Cross Validation）
+- **Mean F1 Score**: 0.4427 ± 0.0451
+- **Mean Recall**: 0.7230 ± 0.1418（採用の72%を検出）✅
+- **Mean Precision**: 0.3310 ± 0.0552（予測の33%が正解）✅
+- **Mean Accuracy**: 0.5855 ± 0.1008
+- **Optimal Threshold**: -0.235 ± 0.103
+
+### 🔧 技術的改善
+
+#### データリーク防止
+- GroupKFoldの実装（同じ動画のシーケンスは同じFoldに配置）
+- 完全なシード固定（`PYTHONHASHSEED`を含む）
+- 各Foldでtrain/val動画の重複チェック
+
+#### メトリクス計算の修正
+- 全メトリクス（Accuracy, Precision, Recall, F1, Specificity）で最適閾値を使用
+- 以前はargmax（50%閾値）を使用していたため不正確だった
+- precision_recall_curveで最適閾値を自動計算
+
+#### 損失関数の最適化
+- 採用率ペナルティシステムを完全削除（負の損失値を引き起こしていた）
+- Class Weights: Active 3x, Inactive 3x（両方のエラーに同等のペナルティ）
+- Focal Loss: alpha=0.75, gamma=3.0
+- TV Loss: 0.05x
+
+#### 可視化の改善
+- CE Loss vs TV Loss グラフの修正
+  - CE Lossを左軸、TV Lossを右軸に分離
+  - Val CE Lossが複数回描画される問題を修正
+  - twin軸の適切なクリア処理を実装
+- 6グラフシステムの完成
+- HTMLビューアーのキャッシュバスティング（タイムスタンプ付きURL）
+
+### 📁 新規ファイル
+- `src/cut_selection/train_cut_selection_kfold.py` - K-Fold学習スクリプト
+- `scripts/create_combined_data_for_kfold.py` - K-Fold用データ準備
+- `configs/config_cut_selection_kfold.yaml` - K-Fold設定
+- `train_cut_selection_kfold.bat` - K-Fold学習バッチファイル
+- `docs/K_FOLD_CROSS_VALIDATION.md` - K-Fold詳細ドキュメント
+- `docs/K_FOLD_FINAL_RESULTS.md` - 最終結果サマリー
+
+### 📊 出力ファイル
+- `checkpoints_cut_selection_kfold/kfold_summary.csv` - 統計サマリー
+- `checkpoints_cut_selection_kfold/kfold_comparison.png` - 全Fold比較
+- `checkpoints_cut_selection_kfold/fold_X/training_progress.png` - Fold別詳細（6グラフ）
+- `checkpoints_cut_selection_kfold/view_training.html` - リアルタイムビューアー
+- `checkpoints_cut_selection_kfold/inference_params.yaml` - 推論パラメータ
+
+### 📝 ドキュメント更新
+- README.md: K-Fold結果を反映
+- docs/K_FOLD_FINAL_RESULTS.md: 詳細な結果分析
+
+### 🐛 修正されたバグ
+- Val CE Lossが複数回描画される問題
+- TV Lossがグラフで見えない問題（スケールの違い）
+- 採用率ペナルティによる負の損失値
+- メトリクス計算の不整合（argmax vs 最適閾値）
+
+---
+
 ## [2025-12-22] - カット選択モデルの実装と動画単位データ分割
 
 ### 🎯 主な変更

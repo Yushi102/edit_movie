@@ -38,6 +38,14 @@ class CutSelectionDataset(Dataset):
         self.visual_features = data['visual']  # (N, seq_len, visual_dim)
         self.active_labels = data['active']  # (N, seq_len) - binary labels
         
+        # Load video names (for GroupKFold)
+        if 'video_names' in data:
+            self.video_names = data['video_names']
+        else:
+            # Fallback: assign unique ID to each sequence
+            logger.warning("video_names not found in data. Using sequence indices as groups.")
+            self.video_names = [f"seq_{i}" for i in range(len(self.audio_features))]
+        
         self.num_sequences = len(self.audio_features)
         self.seq_len = self.audio_features.shape[1]
         self.audio_dim = self.audio_features.shape[2]
@@ -45,6 +53,7 @@ class CutSelectionDataset(Dataset):
         
         logger.info(f"CutSelectionDataset initialized:")
         logger.info(f"  Total sequences: {self.num_sequences}")
+        logger.info(f"  Unique videos: {len(set(self.video_names))}")
         logger.info(f"  Sequence length: {self.seq_len}")
         logger.info(f"  Audio dimensions: {self.audio_dim}")
         logger.info(f"  Visual dimensions: {self.visual_dim}")
@@ -74,3 +83,7 @@ class CutSelectionDataset(Dataset):
             'visual': torch.from_numpy(self.visual_features[idx]).float(),
             'active': torch.from_numpy(self.active_labels[idx]).long()  # Must be long for CE loss
         }
+    
+    def get_video_groups(self):
+        """Get video names for GroupKFold"""
+        return self.video_names
