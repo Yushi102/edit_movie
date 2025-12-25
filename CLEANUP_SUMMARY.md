@@ -141,9 +141,10 @@ xmlai/
 ## 📝 新規作成されたドキュメント
 
 1. **PROJECT_STRUCTURE.md** - プロジェクト構造の詳細説明
-2. **docs/ENSEMBLE_RESULTS.md** - アンサンブル結果の詳細分析
-3. **FEATURE_ENHANCEMENT_README.md** - 特徴量拡張の詳細ガイド
-4. **CLEANUP_SUMMARY.md** - このファイル
+2. **docs/FINAL_RESULTS.md** - K-Fold Cross Validationの最終結果
+3. **docs/K_FOLD_CROSS_VALIDATION.md** - K-Fold CVの詳細
+4. **FEATURE_ENHANCEMENT_README.md** - 特徴量拡張の詳細ガイド
+5. **CLEANUP_SUMMARY.md** - このファイル
 
 ---
 

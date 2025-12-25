@@ -52,9 +52,18 @@ xmlai/
 │       - 784 features (235 audio + 543 visual + 6 temporal)
 │
 ├── 📂 docs/                         # ドキュメント
-│   ├── ENSEMBLE_RESULTS.md          # アンサンブル結果詳細
-│   ├── K_FOLD_CROSS_VALIDATION.md   # K-Fold詳細
-│   └── ...
+│   ├── CUT_SELECTION_MODEL.md      # カット選択モデル詳細
+│   ├── FINAL_RESULTS.md            # 最終結果レポート
+│   ├── K_FOLD_CROSS_VALIDATION.md  # K-Fold詳細
+│   ├── K_FOLD_FINAL_RESULTS.md     # K-Fold最終結果
+│   ├── PROJECT_SPECIFICATION.md    # プロジェクト仕様書
+│   ├── QUICK_START.md              # クイックスタート
+│   ├── TRAINING_REPORT.md          # 学習レポート
+│   └── guides/                     # ガイド集
+│       ├── PROJECT_WORKFLOW_GUIDE.md
+│       ├── REQUIRED_FILES_BY_PHASE.md
+│       ├── SPEAKER_IDENTIFICATION.md
+│       └── VIDEO_FEATURE_EXTRACTION_GUIDE.md
 │
 ├── 📂 archive/                      # 古いファイル（整理済み）
 │   ├── old_experiments/             # 古い実験スクリプト
@@ -166,7 +175,13 @@ batch/train_cut_selection_enhanced_v2.bat
 - `configs/config_cut_selection_kfold_enhanced_v2.yaml` - V2設定（開発中）
 
 ### ドキュメント
-- `docs/ENSEMBLE_RESULTS.md` - アンサンブル結果の詳細分析
+- `docs/CUT_SELECTION_MODEL.md` - カット選択モデルの技術詳細
+- `docs/FINAL_RESULTS.md` - 最終結果レポート（K-Fold CV）
+- `docs/K_FOLD_CROSS_VALIDATION.md` - K-Fold Cross Validationの詳細
+- `docs/TRAINING_REPORT.md` - 詳細学習レポート
+- `docs/PROJECT_SPECIFICATION.md` - プロジェクト仕様書
+- `docs/QUICK_START.md` - クイックスタートガイド
+- `docs/guides/` - 各種技術ガイド
 - `FEATURE_ENHANCEMENT_README.md` - 特徴量拡張の詳細ガイド
 - `CHANGELOG.md` - 全ての変更履歴
 
