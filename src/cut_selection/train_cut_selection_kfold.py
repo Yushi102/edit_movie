@@ -556,34 +556,55 @@ class KFoldVisualizer:
             ax.text(fold, f1 + 0.02, f'{f1:.4f}', 
                    ha='center', va='bottom', fontsize=9)
         
-        # 3. Precision vs Recall（全Fold）
+        # 3. Precision vs Recall（各Foldの最良値）
         ax = axes[1, 0]
-        for fold_data in self.fold_histories:
-            fold = fold_data['fold']
-            history = fold_data['history']
-            ax.plot(history['val_recall'], history['val_precision'], 
-                   label=f'Fold {fold}', linewidth=2, marker='o', markersize=3)
-        ax.set_title('Precision vs Recall（全Fold）')
+        precisions = self.summary['best_val_precision']
+        recalls = self.summary['best_val_recall']
+        colors = plt.cm.viridis(np.linspace(0, 1, len(folds)))
+        
+        for i, (fold, prec, rec, color) in enumerate(zip(folds, precisions, recalls, colors)):
+            ax.scatter(rec, prec, s=200, color=color, alpha=0.7, 
+                      edgecolor='black', linewidth=2, label=f'Fold {fold}', zorder=3)
+            ax.text(rec, prec, f'{fold}', ha='center', va='center', 
+                   fontsize=10, fontweight='bold', color='white')
+        
+        # 平均値をプロット
+        mean_prec = np.mean(precisions)
+        mean_rec = np.mean(recalls)
+        ax.scatter(mean_rec, mean_prec, s=300, color='red', alpha=0.8, 
+                  edgecolor='black', linewidth=3, marker='*', label='平均', zorder=4)
+        
+        ax.set_title('Precision vs Recall（各Foldの最良値）')
         ax.set_xlabel('Recall')
         ax.set_ylabel('Precision')
         ax.set_xlim([0, 1])
         ax.set_ylim([0, 1])
-        ax.legend()
+        ax.legend(loc='best', fontsize=9)
         ax.grid(True, alpha=0.3)
         
-        # 4. 最適閾値の分布
+        # 4. 最適閾値（各Fold）
         ax = axes[1, 1]
         thresholds = self.summary['optimal_threshold']
-        ax.hist(thresholds, bins=10, color='skyblue', edgecolor='black', alpha=0.7)
+        colors = plt.cm.viridis(np.linspace(0, 1, len(folds)))
+        bars = ax.bar(folds, thresholds, color=colors, alpha=0.7, edgecolor='black')
+        
+        # 平均値と標準偏差を表示
         mean_threshold = np.mean(thresholds)
         std_threshold = np.std(thresholds)
-        ax.axvline(x=mean_threshold, color='red', linestyle='--', linewidth=2,
+        ax.axhline(y=mean_threshold, color='red', linestyle='--', linewidth=2,
                   label=f'平均: {mean_threshold:.3f} ± {std_threshold:.3f}')
-        ax.set_title('最適閾値の分布')
-        ax.set_xlabel('Confidence Threshold')
-        ax.set_ylabel('頻度')
+        
+        ax.set_title('最適閾値（各Fold）')
+        ax.set_xlabel('Fold')
+        ax.set_ylabel('Confidence Threshold')
+        ax.set_xticks(folds)
         ax.legend()
         ax.grid(True, alpha=0.3, axis='y')
+        
+        # 各バーに値を表示
+        for i, (fold, th) in enumerate(zip(folds, thresholds)):
+            ax.text(fold, th + 0.02, f'{th:.3f}', 
+                   ha='center', va='bottom', fontsize=9)
         
         plt.tight_layout()
         
@@ -718,7 +739,7 @@ def validate(model, dataloader, criterion, device):
     avg_tv_loss = total_tv_loss / num_batches
     
     # Temperature Scaling (optional calibration)
-    temperature = 0.92  # >1 makes predictions less confident, <1 makes them more confident
+    temperature = 1.52  # >1 makes predictions less confident, <1 makes them more confident
     all_confidence_scores_calibrated = all_confidence_scores / temperature
     
     # Find optimal threshold using F1 + Specificity composite score with Recall constraint
@@ -728,7 +749,7 @@ def validate(model, dataloader, criterion, device):
     precisions, recalls, thresholds = precision_recall_curve(all_labels, all_confidence_scores_calibrated)
     
     # Constraints
-    min_recall = 0.61  # Recall must be >= 61% (緩和してF1を優先)
+    min_recall = 0.7  # Recall must be >= 70% (緩和してF1を優先)
     
     # Find threshold that maximizes F1 + Specificity while maintaining Recall >= 80%
     best_threshold = thresholds[0] if len(thresholds) > 0 else 0.0
@@ -753,8 +774,8 @@ def validate(model, dataloader, criterion, device):
         fp = np.sum((candidate_predictions == 1) & (all_labels == 0))
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
         
-        # Composite score: F1 (59%) + Specificity (37%)
-        composite_score = 0.59 * f1 + 0.37 * specificity
+        # Composite score: F1 (55%) + Specificity (22%)
+        composite_score = 0.55 * f1 + 0.22 * specificity
         
         if composite_score > best_composite_score:
             best_composite_score = composite_score
@@ -896,8 +917,8 @@ def train_single_fold(fold, train_indices, val_indices, full_dataset, config, de
     base_weight_inactive = total_train_samples / (2 * train_inactive_count) if train_inactive_count > 0 else 1.0
     
     # Inactive classに極めて強いペナルティを適用してFalse Positiveを徹底削減
-    weight_active = base_weight_active * 1.0
-    weight_inactive = base_weight_inactive * 18.0
+    weight_active = base_weight_active * 3.9
+    weight_inactive = base_weight_inactive * 29.8
 
     class_weights = torch.tensor([weight_inactive, weight_active], device=device)
 

@@ -2,155 +2,157 @@
 
 ## 📊 Training Summary
 
-**Training Date**: December 22, 2025  
+**Training Date**: December 26, 2025  
 **Configuration**: 5-Fold Cross Validation with GroupKFold  
-**Total Training Time**: ~250 epochs (50 epochs × 5 folds)
+**Total Training Time**: ~2-3 hours (250 epochs = 50 epochs × 5 folds)
 
 ## 🎯 Final Performance Metrics
 
 | Metric | Mean ± Std | Target Range | Status |
 |--------|-----------|--------------|--------|
-| **F1 Score** | 0.4427 ± 0.0451 | 0.40-0.50 | ✅ Achieved |
-| **Recall** | 0.7230 ± 0.1418 | 0.60-0.80 | ✅ Achieved |
-| **Precision** | 0.3310 ± 0.0552 | 0.30-0.60 | ✅ Achieved |
-| **Accuracy** | 0.5855 ± 0.1008 | - | - |
-| **Optimal Threshold** | -0.235 ± 0.103 | - | - |
+| **F1 Score** | 0.4230 ± 0.0575 | 0.55 | ❌ Not Achieved (-12.70pt) |
+| **Recall** | 0.7610 ± 0.0519 | 0.71 | ✅ Achieved (+5.10pt) |
+| **Precision** | 0.2983 ± 0.0580 | 0.40-0.60 | ❌ Below Target |
+| **Accuracy** | 0.5024 ± 0.1492 | - | - |
+| **Optimal Threshold** | -0.533 ± 0.036 | - | - |
 
 ### Per-Fold Results
 
 | Fold | Best Epoch | F1 Score | Accuracy | Precision | Recall | Threshold |
 |------|-----------|----------|----------|-----------|--------|-----------|
-| 1 | 25 | 0.4238 | 0.6987 | 0.2934 | 0.7624 | -0.4100 |
-| 2 | 10 | 0.4106 | 0.4679 | 0.2689 | 0.8684 | -0.2866 |
-| 3 | 4 | 0.4117 | 0.7067 | 0.3773 | 0.4531 | -0.1249 |
-| 4 | 18 | 0.4364 | 0.4906 | 0.3012 | 0.7920 | -0.1807 |
-| 5 | 4 | 0.5309 | 0.5635 | 0.4142 | 0.7391 | -0.1704 |
+| 1 | 4 | **0.4942** | 0.7363 | 0.3694 | 0.7465 | -0.558 |
+| 2 | 1 | 0.4122 | 0.3644 | 0.2785 | 0.7924 | -0.474 |
+| 3 | 20 | 0.4310 | 0.4845 | 0.3094 | 0.7102 | -0.573 |
+| 4 | 9 | 0.4557 | 0.5942 | 0.3354 | 0.7103 | -0.509 |
+| 5 | 3 | 0.3220 | 0.3326 | 0.1989 | 0.8454 | -0.550 |
+
+**Best Model**: Fold 1 (F1: 49.42%, Epoch 4)
 
 ## 🔧 Final Configuration
 
 ### Model Architecture
-- **Type**: Multimodal Transformer (Audio + Visual)
+- **Type**: Enhanced Multimodal Transformer (Audio + Visual + Temporal)
 - **d_model**: 256
 - **nhead**: 8
 - **num_encoder_layers**: 6
 - **dim_feedforward**: 1024
 - **dropout**: 0.15
-- **fusion_type**: gated
+
+### Input Features
+- **Audio**: 235 dimensions
+- **Visual**: 543 dimensions
+- **Temporal**: 6 dimensions
+- **Total**: 784 dimensions
+
+### Training Configuration
+- **Optimizer**: AdamW
+- **Learning Rate**: 0.0001
+- **Batch Size**: 16
+- **Max Epochs**: 50 per fold
+- **Early Stopping**: patience=15
+- **Mixed Precision**: Enabled
+- **Random Seed**: 42 (for reproducibility)
 
 ### Loss Function
-- **Primary Loss**: Focal Loss (alpha=0.75, gamma=3.0)
-- **TV Loss Weight**: 0.05
-- **Class Weights**: Active 3x, Inactive 3x (equal penalty for both errors)
-- **Adoption Rate Penalty**: REMOVED (was causing negative loss values)
+- **Focal Loss**: alpha=0.5, gamma=2.0
+- **TV Regularization**: weight=0.02
+- **Adoption Penalty**: weight=10.0, target_rate=0.23
 
-### Training Hyperparameters
-- **Batch Size**: 16
-- **Learning Rate**: 0.0001
-- **Weight Decay**: 0.0001
-- **Epochs per Fold**: 50
-- **Early Stopping Patience**: 10
-- **Mixed Precision**: Enabled (AMP)
+## 📈 Key Findings
 
-### Data Configuration
-- **Total Videos**: 68
-- **Total Sequences**: 301 (sequence length: 1000 frames, overlap: 500)
-- **Adoption Rate**: 23.34% (true positive rate in dataset)
-- **K-Folds**: 5 (GroupKFold to prevent data leakage)
-- **Random Seed**: 42 (including PYTHONHASHSEED for full reproducibility)
+### Strengths ✅
+1. **High Recall (76.10%)**
+   - Successfully detects 76% of important cuts
+   - Low false negative rate
+   - Good for highlight video generation
 
-## 📈 Key Improvements Made
+2. **Reproducibility**
+   - Consistent results with random seed 42
+   - Standard deviation: ±5.75% (relatively stable)
 
-### 1. Data Leakage Prevention
-- ✅ Implemented GroupKFold to ensure same video clips stay in same fold
-- ✅ Complete seed fixing including `PYTHONHASHSEED`
-- ✅ Verified no overlap between train and validation videos in each fold
+3. **Early Stopping Efficiency**
+   - Average convergence: 7.4 epochs
+   - Prevents overfitting
+   - Saves computation time
 
-### 2. Metrics Calculation Fix
-- ✅ Changed ALL metrics to use optimal threshold (from precision_recall_curve)
-- ✅ Previously only adoption rate used optimal threshold, causing inconsistency
-- ✅ Now Accuracy, Precision, Recall, F1, and Specificity all use the same threshold
+### Weaknesses ❌
+1. **Low Precision (29.83%)**
+   - ~70% of predictions are false positives
+   - Includes many unnecessary cuts
+   - Requires post-processing filtering
 
-### 3. Loss Function Optimization
-- ✅ Removed adoption rate penalty system (was causing negative loss values)
-- ✅ Set class weights to Active 3x, Inactive 3x (equal penalty for both errors)
-- ✅ Enabled Focal Loss with alpha=0.75, gamma=3.0
-- ✅ TV Loss weight set to 0.05
+2. **High Variance Across Folds**
+   - Best (Fold 1): 49.42%
+   - Worst (Fold 5): 32.20%
+   - Difference: 17.22 points
+   - Indicates data imbalance or insufficient data
 
-### 4. Visualization Improvements
-- ✅ Fixed Val CE Loss being drawn multiple times (twinx axis issue)
-- ✅ Separated CE Loss (left axis) and TV Loss (right axis) for better visibility
-- ✅ 6-graph visualization system per fold
-- ✅ Real-time HTML viewer with cache-busting (2-second auto-refresh)
+3. **Target Not Achieved**
+   - Target F1: 55%
+   - Achieved F1: 42.30%
+   - Gap: -12.70 points
 
-## 📁 Output Files
+## 💡 Recommendations
 
-### Checkpoints
-- `checkpoints_cut_selection_kfold/fold_1_best_model.pth` - Best model for Fold 1
-- `checkpoints_cut_selection_kfold/fold_2_best_model.pth` - Best model for Fold 2
-- `checkpoints_cut_selection_kfold/fold_3_best_model.pth` - Best model for Fold 3
-- `checkpoints_cut_selection_kfold/fold_4_best_model.pth` - Best model for Fold 4
-- `checkpoints_cut_selection_kfold/fold_5_best_model.pth` - Best model for Fold 5
+### For Production Use
+1. **Use Fold 1 Model** (F1: 49.42%)
+   - Best overall performance
+   - Threshold: -0.558
+   - Expected Recall: 74.65%
+   - Expected Precision: 36.94%
 
-### Visualizations
-- `checkpoints_cut_selection_kfold/kfold_comparison.png` - Comparison across all folds
-- `checkpoints_cut_selection_kfold/kfold_realtime_progress.png` - Real-time progress
-- `checkpoints_cut_selection_kfold/fold_X/training_progress.png` - Per-fold progress (6 graphs)
-- `checkpoints_cut_selection_kfold/fold_X/training_final.png` - Per-fold final results (high-res)
+2. **Post-Processing Required**
+   - Filter short clips (<3 seconds)
+   - Merge nearby clips
+   - Rank by confidence score
 
-### Data Files
-- `checkpoints_cut_selection_kfold/kfold_summary.csv` - Summary statistics
-- `checkpoints_cut_selection_kfold/fold_X/training_history.csv` - Per-fold training history
-- `checkpoints_cut_selection_kfold/inference_params.yaml` - Recommended inference parameters
+### For Future Improvement
+1. **Data Collection**
+   - Current: 67 videos, 289 sequences
+   - Target: 100+ videos
+   - Ensure diversity in content
 
-### HTML Viewer
-- `checkpoints_cut_selection_kfold/view_training.html` - Interactive training viewer
+2. **Class Imbalance Handling**
+   - Current: 23% active, 77% inactive
+   - Try stronger Focal Loss settings
+   - Consider SMOTE or other sampling techniques
 
-## 🎓 Interpretation
+3. **Feature Engineering**
+   - Add longer-term temporal patterns (MA240, MA480)
+   - Scene boundary detection features
+   - Editing style features
 
-### What the Metrics Mean
+4. **Model Architecture**
+   - Try deeper Transformer (8-12 layers)
+   - Add Temporal Convolution
+   - Multi-scale Attention
 
-**Recall (72.3%)**: The model successfully detects 72% of all "active" (should be included) clips. This is excellent - we're catching most of the important moments.
+## 📁 Generated Files
 
-**Precision (33.1%)**: Of all clips the model predicts as "active", only 33% are actually correct. This means the model is somewhat aggressive in its predictions, but that's acceptable for a highlight reel where we can manually remove false positives.
+```
+checkpoints_cut_selection_kfold_enhanced/
+├── fold_1_best_model.pth       # Best model (F1: 49.42%)
+├── fold_2_best_model.pth
+├── fold_3_best_model.pth
+├── fold_4_best_model.pth
+├── fold_5_best_model.pth
+├── kfold_summary.csv           # Summary statistics
+├── kfold_comparison.png        # Comparison graphs
+├── kfold_realtime_progress.png # Training progress
+├── inference_params.yaml       # Inference parameters
+└── view_training.html          # Training viewer
+```
 
-**F1 Score (44.3%)**: The harmonic mean of precision and recall. This balanced metric shows the model is performing reasonably well overall.
+## 🎯 Conclusion
 
-**Optimal Threshold (-0.235)**: The model uses a negative threshold, meaning it's biased toward predicting "active" (which is good for not missing important moments).
+The K-Fold Cross Validation training successfully established a reliable evaluation methodology with proper data leak prevention. While the F1 score (42.30%) did not reach the target (55%), the model achieves high Recall (76.10%), making it suitable for highlight video generation where missing important cuts is more costly than including extra cuts.
 
-### Trade-offs
+**Next Steps**:
+1. Collect more diverse training data
+2. Improve Precision through better class imbalance handling
+3. Continue iterative model improvements
 
-The current configuration prioritizes **high recall** over **high precision**:
-- ✅ **Good**: Rarely misses important moments (72% detection rate)
-- ⚠️ **Trade-off**: Includes some unnecessary clips (67% false positive rate)
-- 💡 **Practical Impact**: Better to have extra clips that can be manually removed than to miss key moments
+---
 
-## 🚀 Next Steps
-
-### For Inference
-1. Use the average optimal threshold: `-0.235`
-2. Apply post-processing filters:
-   - Minimum clip duration: 3 seconds
-   - Gap merging: 2 seconds
-   - Target total duration: 90 seconds
-   - Maximum total duration: 150 seconds
-
-### For Future Improvements
-1. **Increase Precision**: Collect more training data with diverse editing styles
-2. **Reduce Variance**: Current std of 0.14 for recall is relatively high
-3. **Ensemble Methods**: Combine predictions from all 5 fold models
-4. **Temporal Smoothing**: Apply additional smoothing to reduce jitter
-
-## 📝 Notes
-
-- All 5 folds completed successfully without errors
-- No data leakage detected (verified by GroupKFold)
-- Training was stable with no NaN or infinite loss values
-- Mixed precision training (AMP) worked correctly
-- All visualizations generated successfully
-- Metrics are consistent across all folds (low variance)
-
-## ✅ Conclusion
-
-The K-Fold Cross Validation training completed successfully with all target metrics achieved. The model demonstrates strong recall (72%) while maintaining acceptable precision (33%), making it suitable for automatic highlight generation where false positives can be manually filtered.
-
-The final configuration with Focal Loss (alpha=0.75, gamma=3.0) and equal class weights (3x for both) provides a good balance between detecting important moments and avoiding excessive false positives.
+**Last Updated**: 2025-12-26  
+**Status**: ✅ Training Complete, Ready for Production (with post-processing)

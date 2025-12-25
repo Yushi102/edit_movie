@@ -199,9 +199,10 @@ early_stopping_patience: 20
 
 ### 学習結果
 
-- **Best F1スコア**: 0.5630（Epoch 33）
-- **最適閾値**: -0.200
-- **Accuracy**: 約0.88
+- **Best F1スコア**: 0.4942（Fold 1、Epoch 4）
+- **平均F1スコア**: 0.4230 ± 0.0575
+- **最適閾値**: -0.558 (Fold 1)
+- **Accuracy**: 約0.74 (Fold 1)
 - **Precision**: 約0.52
 - **Recall**: 約0.60
 - **Specificity**: 約0.95

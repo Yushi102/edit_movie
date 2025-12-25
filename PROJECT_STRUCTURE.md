@@ -79,9 +79,10 @@ xmlai/
 **チェックポイント**: `checkpoints_cut_selection_kfold_enhanced/`
 
 **性能**:
-- 個別モデル平均: 41.23% F1
-- **アンサンブル: 60.80% F1** ✨
-- 改善: +19.57ポイント (+47.47%)
+- **K-Fold CV平均: 42.30% F1** ✅
+- 最良モデル: 49.42% F1 (Fold 1)
+- Recall: 76.10% (採用カットを見逃さない)
+- 目標: 55% F1 (未達成、-12.70pt)
 
 **設定**: `configs/config_cut_selection_kfold_enhanced.yaml`
 

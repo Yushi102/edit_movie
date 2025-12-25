@@ -51,10 +51,10 @@
 ![K-Fold Comparison](../checkpoints_cut_selection_kfold_enhanced/kfold_comparison.png)
 
 **グラフの説明:**
-- **左上**: 各FoldのF1スコア比較
-- **右上**: 各Foldの精度（Accuracy）比較
-- **左下**: Precision vs Recall のトレードオフ
-- **右下**: 最適閾値の分布
+- **左上**: 各FoldのF1スコアの推移（エポックごと）
+- **右上**: 各Foldの最良F1スコア（棒グラフ）
+- **左下**: Precision vs Recall（各Foldの最良値をプロット）
+- **右下**: 最適閾値（各Fold、棒グラフ）
 
 ### リアルタイム学習進捗
 

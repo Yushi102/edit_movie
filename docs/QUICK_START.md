@@ -179,8 +179,9 @@ max_duration: 150.0           # 最大合計時間（秒）
 
 ```
 ✅ Training complete!
-Best Val F1: 0.5630
-📊 Training visualization saved: checkpoints_cut_selection/training_final.png
+Best Val F1: 0.4942 (Fold 1)
+Average F1: 0.4230 ± 0.0575
+📊 Training visualization saved: checkpoints_cut_selection_kfold_enhanced/kfold_comparison.png
 ```
 
 推論が成功すると：

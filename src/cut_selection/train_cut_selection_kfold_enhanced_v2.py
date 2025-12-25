@@ -556,34 +556,55 @@ class KFoldVisualizer:
             ax.text(fold, f1 + 0.02, f'{f1:.4f}', 
                    ha='center', va='bottom', fontsize=9)
         
-        # 3. Precision vs Recall（全Fold）
+        # 3. Precision vs Recall（各Foldの最良値）
         ax = axes[1, 0]
-        for fold_data in self.fold_histories:
-            fold = fold_data['fold']
-            history = fold_data['history']
-            ax.plot(history['val_recall'], history['val_precision'], 
-                   label=f'Fold {fold}', linewidth=2, marker='o', markersize=3)
-        ax.set_title('Precision vs Recall（全Fold）')
+        precisions = self.summary['best_val_precision']
+        recalls = self.summary['best_val_recall']
+        colors = plt.cm.viridis(np.linspace(0, 1, len(folds)))
+        
+        for i, (fold, prec, rec, color) in enumerate(zip(folds, precisions, recalls, colors)):
+            ax.scatter(rec, prec, s=200, color=color, alpha=0.7, 
+                      edgecolor='black', linewidth=2, label=f'Fold {fold}', zorder=3)
+            ax.text(rec, prec, f'{fold}', ha='center', va='center', 
+                   fontsize=10, fontweight='bold', color='white')
+        
+        # 平均値をプロット
+        mean_prec = np.mean(precisions)
+        mean_rec = np.mean(recalls)
+        ax.scatter(mean_rec, mean_prec, s=300, color='red', alpha=0.8, 
+                  edgecolor='black', linewidth=3, marker='*', label='平均', zorder=4)
+        
+        ax.set_title('Precision vs Recall（各Foldの最良値）')
         ax.set_xlabel('Recall')
         ax.set_ylabel('Precision')
         ax.set_xlim([0, 1])
         ax.set_ylim([0, 1])
-        ax.legend()
+        ax.legend(loc='best', fontsize=9)
         ax.grid(True, alpha=0.3)
         
-        # 4. 最適閾値の分布
+        # 4. 最適閾値（各Fold）
         ax = axes[1, 1]
         thresholds = self.summary['optimal_threshold']
-        ax.hist(thresholds, bins=10, color='skyblue', edgecolor='black', alpha=0.7)
+        colors = plt.cm.viridis(np.linspace(0, 1, len(folds)))
+        bars = ax.bar(folds, thresholds, color=colors, alpha=0.7, edgecolor='black')
+        
+        # 平均値と標準偏差を表示
         mean_threshold = np.mean(thresholds)
         std_threshold = np.std(thresholds)
-        ax.axvline(x=mean_threshold, color='red', linestyle='--', linewidth=2,
+        ax.axhline(y=mean_threshold, color='red', linestyle='--', linewidth=2,
                   label=f'平均: {mean_threshold:.3f} ± {std_threshold:.3f}')
-        ax.set_title('最適閾値の分布')
-        ax.set_xlabel('Confidence Threshold')
-        ax.set_ylabel('頻度')
+        
+        ax.set_title('最適閾値（各Fold）')
+        ax.set_xlabel('Fold')
+        ax.set_ylabel('Confidence Threshold')
+        ax.set_xticks(folds)
         ax.legend()
         ax.grid(True, alpha=0.3, axis='y')
+        
+        # 各バーに値を表示
+        for i, (fold, th) in enumerate(zip(folds, thresholds)):
+            ax.text(fold, th + 0.02, f'{th:.3f}', 
+                   ha='center', va='bottom', fontsize=9)
         
         plt.tight_layout()
         
