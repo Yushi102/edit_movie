@@ -101,3 +101,7 @@ test_*.py
 
 # Preprocessed data
 preprocessed_data/
+
+# Project documentation (auto-generated)
+CLEANUP_SUMMARY.md
+PROJECT_STRUCTURE.md

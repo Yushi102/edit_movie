@@ -1,28 +1,15 @@
 # カット選択モデル - 最終結果レポート
 
-## 📊 最終性能（検証済み）
+## 📊 最終性能
 
-### 学習性能（K-Fold Cross Validation）
-
-```
-平均F1スコア: 42.30% ± 5.75%
-平均Accuracy: 50.24% ± 14.92%
-平均Precision: 29.83% ± 5.80%
-平均Recall: 76.10% ± 5.19%
-```
-
-**評価方法**: K-Fold Cross Validation（5-Fold）  
-**データセット**: 67動画、289シーケンス  
-**評価日**: 2025-12-26
-
-### 推論性能（Full Video Model）
+### 推論性能（Full Video Model）✅ 推奨
 
 **最新モデル**: Epoch 9, F1=0.5290（学習時）
 
 **推論テスト結果**（bandicam 2025-05-11 19-25-14-768.mp4）:
 ```
 動画長: 1000.1秒（約16.7分）
-最適閾値: 0.8952（F1最大化、90-200秒制約内）
+最適閾値: 0.8952（制約満足、90-200秒制約内）
 予測時間: 181.9秒（目標180秒に完璧に一致）
 採用率: 18.2%（1,819 / 10,001フレーム）
 抽出クリップ数: 10個（合計138.3秒）
@@ -38,79 +25,62 @@ XML生成: 成功（Premiere Pro用）
 
 ---
 
-## 🎯 目標達成状況
+## 📝 参考: K-Fold Cross Validation結果
 
-| 項目 | 目標 | 達成 | 状況 |
-|------|------|------|------|
-| F1スコア | 55% | 42.30% | ❌ 未達成 (-12.70pt) |
-| Recall | 71% | 76.10% | ✅ 達成 (+5.10pt) |
+K-Foldモデルは現在改善中です。詳細は [K-Fold結果レポート](K_FOLD_FINAL_RESULTS.md) を参照してください。
 
----
-
-## 📈 各Foldの詳細結果
-
-| Fold | Best Epoch | F1 Score | Accuracy | Precision | Recall | Threshold |
-|------|-----------|----------|----------|-----------|--------|-----------|
-| 1 | 4 | **49.42%** | 73.63% | 36.94% | 74.65% | -0.558 |
-| 2 | 1 | 41.22% | 36.44% | 27.85% | 79.24% | -0.474 |
-| 3 | 20 | 43.10% | 48.45% | 30.94% | 71.02% | -0.573 |
-| 4 | 9 | 45.57% | 59.42% | 33.54% | 71.03% | -0.509 |
-| 5 | 3 | 32.20% | 33.26% | 19.89% | 84.54% | -0.550 |
-| **平均** | **7.4±6.8** | **42.30±5.75%** | **50.24±14.92%** | **29.83±5.80%** | **76.10±5.19%** | **-0.533±0.036** |
-
-### 最良モデル
-
-- **Fold 1**: 49.42% F1（Epoch 4）
-- 最も安定した性能を示した
+**簡易サマリー**:
+- 平均F1: 42.30% ± 5.75%
+- 平均Recall: 76.10% ± 5.19%
+- 評価方法: 5-Fold Cross Validation
+- 注: シーケンス分割手法に問題あり、改善中
 
 ---
 
-## 📈 学習結果の可視化
+## 🎯 推奨モデル
 
-### 全Fold比較
-
-![K-Fold Comparison](../checkpoints_cut_selection_kfold_enhanced/kfold_comparison.png)
-
-**グラフの説明:**
-- **左上**: 各FoldのF1スコアの推移（エポックごと）
-- **右上**: 各Foldの最良F1スコア（棒グラフ）
-- **左下**: Precision vs Recall（各Foldの最良値をプロット）
-- **右下**: 最適閾値（各Fold、棒グラフ）
-
-### リアルタイム学習進捗
-
-![Realtime Progress](../checkpoints_cut_selection_kfold_enhanced/kfold_realtime_progress.png)
-
-**グラフの説明:**
-- 全250エポック（5 Folds × 50 Epochs）の学習進捗
-- 各Foldの最良F1スコアをリアルタイム表示
-- Early Stoppingによる効率的な学習
-
-### Fold 1 詳細（最良モデル）
-
-![Fold 1 Training](../checkpoints_cut_selection_kfold_enhanced/fold_1/training_final.png)
-
-**6つのグラフの説明:**
-1. **左上 - 損失関数**: Train/Val Lossの推移
-2. **右上 - 損失の内訳**: CE Loss（左軸）とTV Loss（右軸）
-3. **中左 - 分類性能**: Accuracy & F1 Score
-4. **中右 - 詳細メトリクス**: Precision, Recall, Specificity
-5. **下左 - 最適閾値**: エポックごとの最適閾値の変化
-6. **下右 - 予測分布**: 採用/不採用の予測割合
+**Full Video Model** (`checkpoints_cut_selection_fullvideo/best_model.pth`)
+- ✅ 推論テスト成功
+- ✅ 制約満足（90-200秒）
+- ✅ 実用的なXML生成
+- ✅ 高速処理（約7秒/動画）
 
 ---
 
-## 🎯 性能分析
+## 📊 使用方法
 
-### 強み ✅
+### 推論（新しい動画を自動編集）
 
-1. **高いRecall（76.10%）**
-   - 採用すべきカットの76%を正しく検出
-   - False Negative（見逃し）が少ない
-   - ハイライト動画に重要なシーンを含められる
+```bash
+# 推論テスト
+python tests/test_inference_fullvideo.py "video_name"
 
-2. **安定した再現性**
-   - ランダムシード42で一貫した結果
+# XML生成
+python scripts/generate_xml_from_inference.py "path/to/video.mp4"
+```
+
+### 学習（Full Video Model）
+
+```bash
+# Full Video学習
+batch/train_fullvideo.bat
+```
+
+---
+
+## 📈 今後の改善方向
+
+1. **K-Foldモデルの改善**
+   - シーケンス分割手法の見直し
+   - Full Video方式への統一
+
+2. **推論の最適化**
+   - より高速な処理
+   - バッチ処理対応
+
+3. **モデルの改善**
+   - より高いF1スコア
+   - より正確な制約満足
    - 標準偏差: ±5.75%（比較的小さい）
 
 3. **Early Stopping効果**

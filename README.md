@@ -37,8 +37,8 @@ python -m src.inference.inference_pipeline "your_video.mp4" --output outputs/out
 **出力**: `outputs/output.xml` をPremiere Proで開く → 約2分のハイライト動画が完成！
 
 **現在の性能**: 
-- 学習: 平均F1: 42.30%、Recall: 76.10%（K-Fold CV）
-- 推論: 90-200秒制約を満たす最適閾値を自動探索（F1最大化）
+- **Full Video Model（推奨）**: 推論テスト成功、90-200秒制約を満たす最適閾値を自動探索
+- K-Fold Model: 改善中
 
 ---
 

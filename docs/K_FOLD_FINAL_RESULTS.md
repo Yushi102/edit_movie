@@ -1,10 +1,13 @@
 # K-Fold Cross Validation - Final Results
 
+⚠️ **重要**: このK-Foldモデルは現在改善中です。シーケンス分割に問題があり、性能が低下しています。Full Video Modelの使用を推奨します。
+
 ## 📊 Training Summary
 
 **Training Date**: December 26, 2025  
 **Configuration**: 5-Fold Cross Validation with GroupKFold  
-**Total Training Time**: ~2-3 hours (250 epochs = 50 epochs × 5 folds)
+**Total Training Time**: ~2-3 hours (250 epochs = 50 epochs × 5 folds)  
+**Status**: ⚠️ 改善中（シーケンス分割に問題あり）
 
 ## 🎯 Final Performance Metrics
 
@@ -97,6 +100,9 @@
    - Saves computation time
 
 ### Weaknesses ❌
+
+⚠️ **注**: これらの問題はシーケンス分割手法に起因している可能性があります。Full Video Modelでは改善されています。
+
 1. **Low Precision (29.83%)**
    - ~70% of predictions are false positives
    - Includes many unnecessary cuts
