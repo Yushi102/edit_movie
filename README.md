@@ -36,9 +36,16 @@ python -m src.inference.inference_pipeline "your_video.mp4" --output outputs/out
 
 **出力**: `outputs/output.xml` をPremiere Proで開く → 約2分のハイライト動画が完成！
 
+**処理の流れ**:
+1. 動画から特徴量を自動抽出（5-10分）
+2. Full Video Modelで重要シーンを予測（数秒）
+3. 90-200秒制約を満たす最適閾値を自動探索
+4. Premiere Pro用XMLを生成
+
 **現在の性能**: 
-- **Full Video Model（推奨）**: 推論テスト成功、90-200秒制約を満たす最適閾値を自動探索
-- K-Fold Model: 改善中
+- **Full Video Model**: 推論テスト成功、90-200秒制約を満たす最適閾値を自動探索
+- **予測精度**: F1=52.90%、Recall=80.65%（学習時）
+- **制約満足**: 目標180秒に対して181.9秒（+1.9秒、誤差1.1%）
 
 ---
 
@@ -92,33 +99,44 @@ python scripts\add_temporal_features.py
 python scripts\create_cut_selection_data_enhanced_fullvideo.py
 ```
 
-**6. 学習実行（2-3時間、GPU推奨）**
+**6. 学習実行（1-2時間、GPU推奨）**
 
 ```bash
-# Full Video学習（推奨）
+# Full Video学習
 batch\train_fullvideo.bat
 
 # リアルタイム可視化
 # ブラウザで checkpoints_cut_selection_fullvideo/view_training.html を開く
 ```
 
+**学習の特徴**:
+- 1動画=1サンプル（per-video最適化）
+- 動画ごとに90-200秒制約を満たす最適閾値を学習
+- Early Stopping: 性能が向上しなくなったら自動停止
+- Mixed Precision: GPU VRAMを効率的に使用
+
 **出力**: 
 - `checkpoints_cut_selection_fullvideo/best_model.pth` （学習済みモデル）
 - `training_history.csv` （学習履歴）
 - `training_progress.png` （学習グラフ）
+- `view_training.html` （リアルタイム可視化）
 
 ---
 
 ### 📊 現在の性能（2025-12-26検証済み）
 
-#### 推論性能（Full Video Model）✅ 推奨
+#### Full Video Model ✅ 推奨
 
-**最新モデル**: Epoch 9, F1=0.5290（学習時）
+**学習性能** (Epoch 9):
+- F1スコア: 52.90%
+- Recall: 80.65%（採用すべきカットの80%を検出）
+- Precision: 38.94%
+- Accuracy: 62.89%
 
 **推論テスト結果**（bandicam 2025-05-11 19-25-14-768.mp4）:
 - 動画長: 1000.1秒（約16.7分）
-- **最適閾値**: 0.8952（制約満足、90-200秒制約内）
-- **予測時間**: 181.9秒（目標180秒に完璧に一致）
+- **最適閾値**: 0.8952（動画ごとに自動最適化）
+- **予測時間**: 181.9秒（目標180秒に完璧に一致、誤差+1.9秒）
 - **採用率**: 18.2%（1,819 / 10,001フレーム）
 - **抽出クリップ数**: 10個（合計138.3秒）
 - **XML生成**: 成功（Premiere Pro用）
@@ -129,6 +147,10 @@ batch\train_fullvideo.bat
 - ✅ per-video最適化（動画ごとに最適閾値を探索）
 
 **詳細**: [推論テスト結果レポート](docs/INFERENCE_TEST_RESULTS.md)
+
+#### 旧K-Foldモデル（改善中）
+
+シーケンス分割の問題により改善中です。詳細は [K-Fold結果レポート](docs/K_FOLD_FINAL_RESULTS.md) を参照してください。
 
 ---
 
@@ -167,6 +189,7 @@ batch\train_fullvideo.bat
   - 90-200秒制約を満たす最適閾値を自動探索
   - 目標180秒にほぼ完璧に一致（+1.9秒）
   - Premiere Pro用XML生成成功
+  - 旧K-Foldモデルは改善中（シーケンス分割の問題）
 - ⚠️ **グラフィック配置・テロップ生成**: 精度が低いため今後の課題
   - 現在のマルチモーダルモデル（音声・映像・トラック統合）は、グラフィック配置やテロップ生成の精度が実用レベルに達していません
   - カット選択に集中することで、より高品質な自動編集を実現します
@@ -408,17 +431,33 @@ train_cut_selection.bat
 ## 🔧 開発
 
 ### データ準備
+
+**Full Video用データセット作成**:
 ```bash
-# カット選択用データの作成
-python scripts/create_cut_selection_data.py
+# 1. 特徴量抽出（並列処理）
+python -m src.data_preparation.extract_video_features_parallel \
+    --video_dir videos \
+    --output_dir data/processed/source_features \
+    --n_jobs 4
+
+# 2. ラベル抽出
+python -m src.data_preparation.extract_active_labels \
+    --xml_dir data/raw/editxml \
+    --feature_dir data/processed/source_features \
+    --output_dir data/processed/active_labels
+
+# 3. 時系列特徴量追加
+python scripts/add_temporal_features.py
+
+# 4. Full Video用データセット作成
+python scripts/create_cut_selection_data_enhanced_fullvideo.py
 ```
 
 ### 学習
 
-**Full Video Model（推奨）:**
+**Full Video Model**:
 ```bash
-# 1. データ準備
-python scripts/create_cut_selection_data_enhanced_fullvideo.py
+# 1. データ準備（上記参照）
 
 # 2. トレーニング実行
 batch/train_fullvideo.bat
@@ -427,20 +466,54 @@ batch/train_fullvideo.bat
 # ブラウザで checkpoints_cut_selection_fullvideo/view_training.html を開く
 ```
 
-### テスト
-```bash
-# 推論テスト
-python tests/test_inference_fullvideo.py "video_name"
+**学習パラメータ**:
+- バッチサイズ: 1（1動画=1サンプル）
+- 最大エポック: 500
+- Early Stopping: 100エポック
+- 学習率: 0.0001
+- オプティマイザ: AdamW
+- 損失関数: Focal Loss + TV Regularization + Adoption Penalty
 
-# XML生成
+### テスト
+
+**推論テスト**:
+```bash
+# Full Video推論テスト
+python tests/test_inference_fullvideo.py "video_name"
+```
+
+**XML生成**:
+```bash
+# 動画からXMLを生成
 python scripts/generate_xml_from_inference.py "path/to/video.mp4"
 ```
 
+**出力**:
+- `outputs/video_name_output.xml` - Premiere Pro用XML
+- 自動的に90-200秒制約を満たす最適閾値を探索
+- 目標180秒に近い長さのハイライト動画を生成
+
 ## 📊 性能
 
-### カット選択モデル（Cut Selection Model）
+### Full Video Model（推奨）
 
-#### 推論性能（Full Video Model）✅ 推奨
+#### 学習性能
+
+**最良モデル**: Epoch 9
+
+| 指標 | 値 |
+|------|-----|
+| F1スコア | 52.90% |
+| Recall | 80.65% |
+| Precision | 38.94% |
+| Accuracy | 62.89% |
+
+**特徴**:
+- 採用すべきカットの80%以上を検出（高Recall）
+- 1動画=1サンプルのper-video最適化
+- 動画ごとに90-200秒制約を満たす閾値を自動学習
+
+#### 推論性能
 
 **推論テスト結果**（bandicam 2025-05-11 19-25-14-768.mp4）:
 - 動画長: 1000.1秒（約16.7分）
@@ -456,10 +529,16 @@ python scripts/generate_xml_from_inference.py "path/to/video.mp4"
 
 **詳細**: [推論テスト結果レポート](docs/INFERENCE_TEST_RESULTS.md)
 
+### 旧K-Foldモデル（改善中）
+
+シーケンス分割の問題により改善中です。詳細は以下を参照：
+- [K-Fold最終結果](docs/K_FOLD_FINAL_RESULTS.md)
+- [K-Fold詳細レポート](docs/KFOLD_TRAINING_REPORT.md)
+
 #### データセット
 - **学習データ**: 67動画
-  - Full Video方式: 1動画=1サンプル
-  - per-video最適化
+  - 1動画=1サンプル（per-video最適化）
+  - 動画ごとに90-200秒制約を学習
 - **採用率**: 全体23.12%
 - **特徴量**: 784次元（音声235 + 映像543 + 時系列6）
 - **想定入力**: 10分程度の動画
@@ -470,9 +549,10 @@ python scripts/generate_xml_from_inference.py "path/to/video.mp4"
 **学習フェーズ:**
 - **特徴量抽出**: 5-10分/動画（10分の動画、GPU: RTX 3060 Ti使用）
   - 並列処理（n_jobs=4）で高速化可能
-- **学習時間**: 50エポック × 5 Folds = 約2-3時間（GPU使用時）
+- **学習時間**: 約1-2時間（GPU使用時）
   - 1エポック: 約1-2分
-  - Early Stopping: 平均7.4エポックで収束
+  - Early Stopping: 性能が向上しなくなったら自動停止
+  - 最良モデル: Epoch 9で達成
 
 **推論フェーズ:**
 - **特徴量抽出**: 5-10分/動画（10分の動画）
@@ -503,12 +583,18 @@ Loss Function:
 Training:
   - Optimizer: AdamW
   - Learning Rate: 0.0001
-  - Batch Size: 16
+  - Batch Size: 1 (per-video)
   - Mixed Precision: Enabled
   - Random Seed: 42（再現性確保）
 ```
 
-詳細な結果分析は [最終結果レポート](docs/FINAL_RESULTS.md) を参照してください。
+**特徴**:
+- 音声・映像・時系列の3つのモダリティを融合
+- Transformerで長期的な依存関係を学習
+- per-video最適化で動画ごとに最適な閾値を学習
+- 90-200秒制約を満たすように自動調整
+
+詳細な結果分析は [最終結果レポート](docs/FINAL_RESULTS.md) と [推論テスト結果](docs/INFERENCE_TEST_RESULTS.md) を参照してください。
 
 ## ⚠️ 既知の問題点・改善点
 
