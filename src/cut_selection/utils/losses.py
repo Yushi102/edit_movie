@@ -122,8 +122,9 @@ class CombinedCutSelectionLoss(nn.Module):
     Combines:
     1. CrossEntropy loss (for classification)
     2. Total Variation loss (for temporal smoothness)
-    3. Duration Constraint Penalty (to keep total output within target duration)
-    4. Recall Reward (to maximize recall while respecting duration constraint)
+    
+    Note: Duration penalty and recall metrics should be calculated separately
+    in the training loop for better separation of concerns.
     """
     
     def __init__(
@@ -134,6 +135,7 @@ class CombinedCutSelectionLoss(nn.Module):
         use_focal: bool = False,
         focal_alpha: float = 0.25,
         focal_gamma: float = 2.0,
+        # Legacy parameters (kept for backward compatibility, not used)
         target_duration: float = 180.0,
         duration_penalty_weight: float = 0.5,
         recall_reward_weight: float = 1.0,
@@ -150,20 +152,17 @@ class CombinedCutSelectionLoss(nn.Module):
             use_focal: Use Focal Loss instead of CrossEntropy
             focal_alpha: Focal loss alpha parameter
             focal_gamma: Focal loss gamma parameter
-            target_duration: Target total duration in seconds (e.g., 180 for 3 minutes)
+            
+            Legacy parameters (not used, kept for backward compatibility):
+            target_duration: Target total duration in seconds
             duration_penalty_weight: Weight for duration constraint penalty
-            recall_reward_weight: Weight for recall reward (higher = prioritize recall)
+            recall_reward_weight: Weight for recall reward
             fps: Frames per second for duration calculation
             min_clip_duration: Minimum clip duration in seconds
         """
         super().__init__()
         
         self.use_focal = use_focal
-        self.target_duration = target_duration
-        self.duration_penalty_weight = duration_penalty_weight
-        self.recall_reward_weight = recall_reward_weight
-        self.fps = fps
-        self.min_clip_duration = min_clip_duration
         
         if use_focal:
             self.ce_loss = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
@@ -178,34 +177,8 @@ class CombinedCutSelectionLoss(nn.Module):
         
         self.tv_loss = TotalVariationLoss(weight=tv_weight)
     
-    def extract_clips_duration(self, predictions: torch.Tensor) -> torch.Tensor:
-        """
-        Extract clips from predictions and calculate total duration (FAST approximation)
-        
-        Args:
-            predictions: Predicted logits (batch, seq_len, 2)
-        
-        Returns:
-            total_duration: Total duration of all clips in seconds (scalar tensor)
-        """
-        # Get binary predictions (0 or 1)
-        probs = F.softmax(predictions, dim=-1)
-        pred_active = (probs[..., 1] > 0.5).float()  # (batch, seq_len)
-        
-        # FAST APPROXIMATION: Simply count active frames and convert to duration
-        # This is much faster than iterating through clips
-        # Assumption: Most active frames will be part of valid clips (>= min_clip_duration)
-        
-        # Count active frames per batch
-        active_frames = pred_active.sum(dim=1)  # (batch,)
-        
-        # Convert to duration (frames / fps)
-        durations = active_frames / self.fps  # (batch,)
-        
-        # Average over batch
-        avg_duration = durations.mean()
-        
-        return avg_duration
+    # Note: extract_clips_duration() has been moved to src.cut_selection.utils.clip_extraction
+    # Use calculate_total_duration() or calculate_total_duration_fast() instead
     
     def forward(
         self,
@@ -233,70 +206,15 @@ class CombinedCutSelectionLoss(nn.Module):
         # Temporal smoothness loss
         tv_loss = self.tv_loss(predictions)
         
-        # Calculate Recall (True Positive Rate)
-        probs = F.softmax(predictions, dim=-1)
-        pred_active = (probs[..., 1] > 0.5).float()  # (batch, seq_len)
-        targets_float = targets.float()
-        
-        # True Positives: predicted active AND actually active
-        tp = (pred_active * targets_float).sum()
-        # False Negatives: predicted inactive BUT actually active
-        fn = ((1 - pred_active) * targets_float).sum()
-        
-        # Recall = TP / (TP + FN)
-        recall = tp / (tp + fn + 1e-8)
-        
-        # Recall reward: higher recall = lower loss
-        # We want to MAXIMIZE recall, so we MINIMIZE (1 - recall)
-        recall_loss = self.recall_reward_weight * (1.0 - recall)
-        
-        # Duration constraint penalty
-        # Calculate predicted total duration
-        pred_duration = self.extract_clips_duration(predictions)
-        
-        # Minimum duration (50% of target)
-        min_duration = self.target_duration * 0.5
-        
-        # Progressive penalty based on duration
-        # <50% of target: Strong penalty (too conservative, missing content)
-        # 50%-100% of target: No penalty (ideal range)
-        # 100%-120% of target: Linear penalty (slight overage)
-        # 120%-150% of target: Quadratic penalty (moderate overage)
-        # >150% of target: Exponential penalty (severe overage)
-        
-        if pred_duration < min_duration:
-            # VERY STRONG penalty for being too conservative (not using enough budget)
-            # This should force the model to use at least 50% of the budget
-            shortage = min_duration - pred_duration
-            duration_penalty = self.duration_penalty_weight * ((shortage / self.target_duration) ** 3) * 50.0
-        elif pred_duration <= self.target_duration:
-            # No penalty if within ideal range (50%-100% of target)
-            duration_penalty = torch.tensor(0.0, device=predictions.device)
-        elif pred_duration <= self.target_duration * 1.2:
-            # Linear penalty for slight overage (0-20% over)
-            excess = pred_duration - self.target_duration
-            duration_penalty = self.duration_penalty_weight * (excess / self.target_duration)
-        elif pred_duration <= self.target_duration * 1.5:
-            # Quadratic penalty for moderate overage (20-50% over)
-            excess = pred_duration - self.target_duration
-            duration_penalty = self.duration_penalty_weight * ((excess / self.target_duration) ** 2) * 5.0
-        else:
-            # Exponential penalty for severe overage (>50% over)
-            excess = pred_duration - self.target_duration
-            duration_penalty = self.duration_penalty_weight * ((excess / self.target_duration) ** 3) * 20.0
-        
-        # Total loss = CE loss + TV loss + Recall loss + Duration penalty
-        # Note: Recall loss is (1 - recall), so minimizing it maximizes recall
-        total_loss = ce_loss + tv_loss + recall_loss + duration_penalty
+        # Total loss = CE loss + TV loss
+        # Note: Duration penalty and recall metrics should be calculated separately
+        # in the training loop, not as part of the loss function
+        total_loss = ce_loss + tv_loss
         
         # Return loss components for logging
         loss_dict = {
             'ce_loss': ce_loss.item(),
             'tv_loss': tv_loss.item(),
-            'recall_loss': recall_loss.item(),
-            'recall': recall.item(),
-            'duration_penalty': duration_penalty.item(),
-            'pred_duration': pred_duration.item(),
             'total_loss': total_loss.item()
         }
         

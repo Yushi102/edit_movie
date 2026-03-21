@@ -1,52 +1,36 @@
-# Full Video Cut Selection Model Configuration
-# 1 VIDEO = 1 SAMPLE (no sequence splitting)
-# Applies 90s minimum constraint PER VIDEO
-
-# Data paths
-train_data_path: preprocessed_data/train_fullvideo_cut_selection_enhanced.npz
-val_data_path: preprocessed_data/val_fullvideo_cut_selection_enhanced.npz
-checkpoint_dir: checkpoints_cut_selection_fullvideo
-
-# Feature dimensions
-audio_features: 235
-visual_features: 543
-temporal_features: 6
-
-# Model architecture
-d_model: 256
-nhead: 8
-num_encoder_layers: 6
-dim_feedforward: 1024
-dropout: 0.1
-
-# Training settings
-num_epochs: 500
-batch_size: 1  # Must be 1 for variable-length videos
+train_data_path: preprocessed_data/train_fullvideo_v2.npz
+val_data_path: preprocessed_data/val_fullvideo_v2.npz
+checkpoint_dir: checkpoints_cut_selection_fullvideo_v2
+audio_features: 1004
+visual_features: 522
+temporal_features: 0
+d_model: 128
+nhead: 4
+num_encoder_layers: 3
+dim_feedforward: 512
+dropout: 0.4
+num_epochs: 300
+batch_size: 1
 learning_rate: 0.0001
-weight_decay: 0.01
+weight_decay: 0.1
 max_grad_norm: 1.0
 use_amp: true
-
-# Random seed
+use_cosine_lr: true
 random_state: 42
-
-# Loss function - Maximize Recall with Duration Constraint (PER VIDEO)
 use_focal_loss: false
 tv_weight: 0.0
-duration_penalty_weight: 0.5
-recall_reward_weight: 5.0  # Strong recall optimization
-label_smoothing: 0.0
-
-# Inference constraints (APPLIED PER VIDEO)
-max_total_duration: 180.0  # Target: 3 minutes
-hard_max_duration: 200.0  # Hard max: target + 20s
-min_total_duration: 90.0  # Hard min: 90 seconds (if video >= 90s)
-min_clip_duration: 3.0  # Minimum clip duration
-inference_fps: 10.0  # FPS
-
-# Early stopping
-early_stopping_patience: 100  # Minimum 100 epochs before stopping
-
-# Hardware
+duration_penalty_weight: 0.0
+recall_reward_weight: 0.0
+label_smoothing: 0.1
+inactive_weight_multiplier: 0.9
+max_total_duration: 180.0
+hard_max_duration: 200.0
+min_total_duration: 90.0
+min_clip_duration: 3.0
+inference_fps: 10.0
+early_stopping_patience: 40
+target_recall: 0.75
+min_precision: 0.35
+val_max_active_ratio: 0.5
 cpu: false
 num_workers: 0

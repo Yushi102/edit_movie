@@ -67,7 +67,7 @@ python scripts/video_to_xml.py "動画パス" --output "custom.xml"
 
 **現在の性能**: 
 - **Full Video Model**: 推論テスト成功、目標範囲内に収まる最適閾値を自動探索
-- **予測精度**: F1=52.90%、Recall=80.65%（学習時）
+- **予測精度**: F1=57.35%、Recall=87.16%、Precision=42.73%（Round 1、41エポック）
 - **制約満足**: 目標180秒に対して188.8秒（範囲: 90～200秒）
 - **クリップ処理**: 隙間1秒未満を結合、3秒未満を除外
 
@@ -91,73 +91,99 @@ data/raw/editxml/    # Premiere Proで編集したXML
 └── video3.xml
 ```
 
-**2. 特徴量抽出（5-10分/動画）**
+**2. ワンボタン学習（推奨）**
+
+ワンコマンドで学習パイプライン全体を実行：
 
 ```bash
-# 音声・映像・テキストの特徴量を自動抽出
-python -m src.data_preparation.extract_video_features_parallel ^
-    --video_dir videos ^
-    --output_dir data/processed/source_features ^
-    --n_jobs 4
+# Pythonスクリプト（全プラットフォーム対応）
+python scripts/train_pipeline_onebutton.py
+
+# またはバッチファイル（Windows）
+batch\train_pipeline_onebutton.bat
+
+# 音声分離あり（Whisper精度が10-30%向上）
+python scripts/train_pipeline_onebutton.py --enable-audio-separation
 ```
 
-**3. ラベル抽出（数秒）**
+以下のステップを自動実行：
+- 特徴量抽出（5-10分/動画）
+- ラベル抽出（数秒）
+- 時系列特徴量追加（数分）
+- データセット作成（数分）
+- モデル学習（1-2時間）
+
+**オプション:**
+```bash
+# 音声分離で Whisper 精度向上
+python scripts/train_pipeline_onebutton.py --enable-audio-separation
+
+# 特徴量抽出をスキップ（抽出済みの場合）
+python scripts/train_pipeline_onebutton.py --skip-extraction
+
+# 前回の状態から再開（中断した場合）
+python scripts/train_pipeline_onebutton.py --resume
+
+# 学習のみ実行（前処理をスキップ）
+python scripts/train_pipeline_onebutton.py --only-train
+
+# 実行計画を表示（実行しない）
+python scripts/train_pipeline_onebutton.py --dry-run
+```
+
+**2b. Auto Training Loop（上級者向け）**
+
+recallとprecisionの目標値を達成するまで、ハイパーパラメータを自動調整しながら学習を繰り返す：
 
 ```bash
-# XMLから「採用/不採用」ラベルを自動抽出
-python -m src.data_preparation.extract_active_labels ^
-    --xml_dir data/raw/editxml ^
-    --feature_dir data/processed/source_features ^
-    --output_dir data/processed/active_labels
+# デフォルト設定（目標recall=75%、最低precision=35%、最大8ラウンド）
+python scripts/auto_train_loop.py
+
+# カスタム目標値
+python scripts/auto_train_loop.py --max-rounds 8 --target-recall 0.75 --min-precision 0.35
+
+# 実行中か確認
+type outputs\auto_train_loop.lock
 ```
 
-**4. 時系列特徴量追加（数分）**
+ループが自動で行うこと：
+- 各ラウンド後にメトリクスを分析（recall、precision、F1、過学習）
+- `inactive_weight_multiplier`、dropout、学習率などを調整
+- `recall >= target_recall` かつ `precision >= min_precision` で停止
+- 各ラウンドのモデルを `best_model_round{N}.pth` にバックアップ
+- ロックファイル（`outputs/auto_train_loop.lock`）で多重起動を防止
 
-```bash
-# 移動平均、変化率、CLIP類似度などを追加
-python scripts\add_temporal_features.py
-```
-
-**5. Full Video用データセット作成（数分）**
-
-```bash
-# Full Video学習用にデータを準備
-python scripts\create_cut_selection_data_enhanced_fullvideo.py
-```
-
-**6. 学習実行（1-2時間、GPU推奨）**
-
-```bash
-# Full Video学習
-batch\train_fullvideo.bat
-
-# リアルタイム可視化
-# ブラウザで checkpoints_cut_selection_fullvideo/view_training.html を開く
-```
-
-**学習の特徴**:
-- 1動画=1サンプル（per-video最適化）
-- 動画ごとに90-200秒制約を満たす最適閾値を学習
-- Early Stopping: 性能が向上しなくなったら自動停止
-- Mixed Precision: GPU VRAMを効率的に使用
-
-**出力**: 
-- `checkpoints_cut_selection_fullvideo/best_model.pth` （学習済みモデル）
-- `training_history.csv` （学習履歴）
-- `training_progress.png` （学習グラフ）
-- `view_training.html` （リアルタイム可視化）
+**調整戦略**:
+- recall低い → `inactive_weight_multiplier` を下げる（activeを取りやすくする）
+- recall OK、precision低すぎ → `inactive_weight_multiplier` を少し上げる
+- recall OK、precision OK → F1最大化のための微調整
+- 過学習 → dropout / weight_decay / label_smoothing を増やす
+- 未学習 → dropout を下げる、学習率を上げる
 
 ---
 
-### 📊 現在の性能（2025-12-26検証済み）
+### 📊 現在の性能（2026-03-21更新）
 
 #### Full Video Model ✅ 推奨
 
-**学習性能** (Epoch 9):
-- F1スコア: 52.90%
-- Recall: 80.65%（採用すべきカットの80%を検出）
-- Precision: 38.94%
-- Accuracy: 62.89%
+**学習性能** (ベスト: Round 1、Epoch 41):
+- **Recall**: 87.16%（採用すべきカットの87%を検出）
+- **F1スコア**: 57.35%
+- **Precision**: 42.73%
+- **学習時間**: 約41エポック（Early Stopping適用）
+- **予測方式**: 純粋なargmax（active率制約なし）
+
+**学習戦略**:
+- 目標: recall >= 75%、precision >= 35%
+- 両方達成後はF1でベストモデルを選択
+- 未達の場合はrecall最大のモデルを保存
+- active率制約なし — 純粋なargmax予測
+
+**学習詳細**:
+- チェックポイントディレクトリ: `checkpoints_cut_selection_fullvideo_v2/`
+- アーカイブ: `archive/checkpoints_f1_optimized_v1_20260321_185106/`
+
+![学習結果](docs/training_final_2025-12-26.png)
 
 **推論テスト結果**（bandicam 2025-05-11 19-25-14-768.mp4）:
 - 動画長: 1000.1秒（約16.7分）
@@ -171,6 +197,7 @@ batch\train_fullvideo.bat
 - ✅ 90秒以上200秒以下の制約を満たす
 - ✅ 目標180秒（3分）にほぼ完璧に一致
 - ✅ per-video最適化（動画ごとに最適閾値を探索）
+- ✅ Early Stoppingで効率的な学習（学習時間を約78%削減）
 
 **詳細**: [推論テスト結果レポート](docs/INFERENCE_TEST_RESULTS.md)
 
@@ -211,15 +238,11 @@ batch\train_fullvideo.bat
 
 **本プロジェクトは現在、カット選択（Cut Selection）に特化して開発中です。**
 
-- ✅ **カット選択モデル**: Full Video Model推奨（推論テスト成功）
-  - 90-200秒制約を満たす最適閾値を自動探索
-  - 目標180秒にほぼ完璧に一致（+1.9秒）
+- ✅ **カット選択モデル**: Full Video Model（Recall=87.16%、F1=57.35%、Precision=42.73%）
+  - Auto Training Loop: 目標達成まで自動でハイパーパラメータを調整
+  - 純粋なargmax予測 — active率制約なし
   - Premiere Pro用XML生成成功
-  - 旧K-Foldモデルは改善中（シーケンス分割の問題）
 - ⚠️ **グラフィック配置・テロップ生成**: 精度が低いため今後の課題
-  - 現在のマルチモーダルモデル（音声・映像・トラック統合）は、グラフィック配置やテロップ生成の精度が実用レベルに達していません
-  - カット選択に集中することで、より高品質な自動編集を実現します
-  - グラフィック・テロップ機能は将来的に改善予定です
 
 ## 🎯 機能
 
@@ -486,20 +509,24 @@ python scripts/create_cut_selection_data_enhanced_fullvideo.py
 ```bash
 # 1. データ準備（上記参照）
 
-# 2. トレーニング実行
+# 2. 学習実行（単発）
 batch/train_fullvideo.bat
 
-# 3. 学習状況の確認
-# ブラウザで checkpoints_cut_selection_fullvideo/view_training.html を開く
+# 3. またはAuto Training Loop（推奨 — 目標達成まで自動調整）
+python scripts/auto_train_loop.py --max-rounds 8 --target-recall 0.75 --min-precision 0.35
+
+# 4. 学習状況の確認
+# ブラウザで checkpoints_cut_selection_fullvideo_v2/view_training.html を開く
 ```
 
 **学習パラメータ**:
 - バッチサイズ: 1（1動画=1サンプル）
-- 最大エポック: 500
-- Early Stopping: 100エポック
+- 最大エポック: 300
+- Early Stopping: 40エポック
 - 学習率: 0.0001
 - オプティマイザ: AdamW
-- 損失関数: Focal Loss + TV Regularization + Adoption Penalty
+- 損失関数: CrossEntropyWithラベルスムージング
+- 予測方式: 純粋なargmax（active率制約なし）
 
 ### テスト
 
@@ -534,19 +561,19 @@ python scripts/generate_xml_from_inference.py "path/to/video.mp4"
 
 #### 学習性能
 
-**最良モデル**: Epoch 9
+**最良モデル**: Round 1、Epoch 41
 
 | 指標 | 値 |
 |------|-----|
-| F1スコア | 52.90% |
-| Recall | 80.65% |
-| Precision | 38.94% |
-| Accuracy | 62.89% |
+| Recall | 87.16% |
+| F1スコア | 57.35% |
+| Precision | 42.73% |
 
 **特徴**:
-- 採用すべきカットの80%以上を検出（高Recall）
-- 1動画=1サンプルのper-video最適化
-- 動画ごとに90-200秒制約を満たす閾値を自動学習
+- 採用すべきカットの87%を検出（高Recall）
+- 純粋なargmax予測 — active率制約なし
+- Auto Training Loopが自動でハイパーパラメータを調整
+- ベストモデル基準: recall >= 75% かつ precision >= 35% の中でF1最大
 
 #### 推論性能
 
@@ -636,9 +663,14 @@ Training:
 ### 現在の問題点
 
 #### 1. テロップ関連
-- **テロップがBase64エンコードで特徴量に含められていない**
-  - Premiere ProのBase64エンコード形式のため、テロップの内容や位置情報を学習に活用できていない
-  - OCRで検出したテロップ情報が学習データに反映されていない
+- **✅ テロップ抽出実装済み**
+  - Premiere ProのBase64エンコードされたテロップデータのデコードに成功
+  - 日本語テキストと表示タイミングを抽出
+  - 109動画から3,262件のテロップを抽出（成功率99.1%）
+  - 詳細は [テロップ抽出ガイド](docs/TELOP_EXTRACTION_GUIDE.md) を参照
+- **テロップが学習特徴量に未統合**
+  - テロップ情報はまだモデル学習に活用されていない
+  - 今後の課題: テロップ密度・テキスト分析を特徴量として追加
 - **テロップのXML出力未対応**
   - 学習したテロップ情報をXMLに出力する機能が実装されていない
   - 現在はテロップ生成を無効化して対応（`configs/config_telop_generation.yaml`）
@@ -706,8 +738,11 @@ Training:
 
 ### 技術的負債
 
+#### 解決済み
+- **✅ Base64テロップデコード実装済み**: Premiere Pro XMLからテロップ情報のデコード・抽出に成功
+
 #### 未解決（機能面）
-- **Base64形式の解析処理未実装**: Premiere ProのBase64エンコード形式の解析・デコード処理が必要
+- **テロップ特徴量未統合**: テロップ密度・テキスト分析を学習特徴量に追加する必要あり
 - **XMLパーサーの制限**: ネストされたシーケンスやマルチカムクリップに未対応
 - **Asset ID管理の問題**: ファイル名ベースのID割り当てで汎用性がない
 - **単一トラック配置の制限**: 複数トラック対応への改修が必要

@@ -138,7 +138,7 @@ def create_dataloaders(
     train_npz: str,
     val_npz: str,
     batch_size: int = 32,
-    num_workers: int = 0,
+    num_workers: int = 4,  # Changed from 0 to 4 for better performance
     shuffle_train: bool = True,
     pin_memory: bool = True
 ) -> Tuple[DataLoader, DataLoader]:
@@ -149,7 +149,9 @@ def create_dataloaders(
         train_npz: Path to training .npz file
         val_npz: Path to validation .npz file
         batch_size: Batch size
-        num_workers: Number of worker processes for data loading
+        num_workers: Number of worker processes for data loading (default: 4)
+                    Recommended: 4-8 for CPU, 4-8 for GPU training
+                    Set to 0 for debugging or if multiprocessing causes issues
         shuffle_train: Whether to shuffle training data
         pin_memory: Whether to pin memory for faster GPU transfer
     

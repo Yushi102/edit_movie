@@ -67,7 +67,7 @@ python scripts/video_to_xml.py "video/path" --output "custom.xml"
 
 **Current Performance**: 
 - **Full Video Model**: Inference test successful, automatically searches for optimal threshold within target range
-- **Prediction Accuracy**: F1=52.90%, Recall=80.65% (during training)
+- **Prediction Accuracy**: F1=57.35%, Recall=87.16%, Precision=42.73% (Round 1, 41 epochs)
 - **Constraint Satisfaction**: 188.8s for target 180s (range: 90-200s)
 - **Clip Processing**: Merge gaps <1s, exclude <3s
 
@@ -91,7 +91,80 @@ data/raw/editxml/    # XML edited in Premiere Pro
 └── video3.xml
 ```
 
-**2. Feature Extraction (5-10 minutes/video)**
+**2. One-Button Training (Recommended)**
+
+Execute the complete training pipeline with a single command:
+
+```bash
+# Python script (all platforms)
+python scripts/train_pipeline_onebutton.py
+
+# Or use batch file (Windows)
+batch\train_pipeline_onebutton.bat
+
+# With audio separation (improves Whisper accuracy by 10-30%)
+python scripts/train_pipeline_onebutton.py --enable-audio-separation
+```
+
+This automatically executes all steps:
+- Feature Extraction (5-10 min per video)
+- Label Extraction (few seconds)
+- Temporal Features Addition (few minutes)
+- Dataset Creation (few minutes)
+- Model Training (1-2 hours)
+
+**Options:**
+```bash
+# Enable audio separation for better Whisper transcription
+python scripts/train_pipeline_onebutton.py --enable-audio-separation
+
+# Skip feature extraction (if already extracted)
+python scripts/train_pipeline_onebutton.py --skip-extraction
+
+# Resume from previous state (if interrupted)
+python scripts/train_pipeline_onebutton.py --resume
+
+# Training only (skip all preprocessing)
+python scripts/train_pipeline_onebutton.py --only-train
+
+# Show execution plan without running
+python scripts/train_pipeline_onebutton.py --dry-run
+```
+
+**2b. Auto Training Loop (Advanced)**
+
+Automatically repeats training with hyperparameter adjustment until recall and precision targets are met:
+
+```bash
+# Default settings (target recall=75%, min precision=35%, max 8 rounds)
+python scripts/auto_train_loop.py
+
+# Custom targets
+python scripts/auto_train_loop.py --max-rounds 8 --target-recall 0.75 --min-precision 0.35
+
+# Check if already running
+type outputs\auto_train_loop.lock
+```
+
+The loop automatically:
+- Analyzes metrics after each round (recall, precision, F1, overfitting)
+- Adjusts `inactive_weight_multiplier`, dropout, learning rate, etc.
+- Stops when `recall >= target_recall` AND `precision >= min_precision`
+- Backs up each round's model as `best_model_round{N}.pth`
+- Prevents duplicate launches via lock file (`outputs/auto_train_loop.lock`)
+
+**Adjustment strategy**:
+- Recall too low → lower `inactive_weight_multiplier` (predict more active)
+- Recall OK, precision too low → raise `inactive_weight_multiplier` slightly
+- Recall OK, precision OK → fine-tune for F1 maximization
+- Overfitting → increase dropout / weight_decay / label_smoothing
+- Underfitting → decrease dropout, increase learning rate
+
+**3. Manual Step-by-Step Training (Alternative)**
+
+If you prefer to execute each step manually:
+
+**3.1. Feature Extraction (5-10 minutes/video)**
 
 ```bash
 # Automatically extract audio, video, and text features
@@ -101,38 +174,53 @@ python -m src.data_preparation.extract_video_features_parallel ^
     --n_jobs 4
 ```
 
-**3. Label Extraction (seconds)**
+**3.2. Label Extraction (seconds)**
 
 ```bash
 # Automatically extract "adopted/not adopted" labels from XML
-python -m src.data_preparation.extract_active_labels ^
-    --xml_dir data/raw/editxml ^
-    --feature_dir data/processed/source_features ^
-    --output_dir data/processed/active_labels
+python scripts/extract_active_labels.py
+
+# (Optional) Extract telop information from XML
+python scripts/extract_telop_from_xml.py
 ```
 
-**4. Add Temporal Features (minutes)**
+**Active Label Extraction** (`extract_active_labels.py`):
+- Reads XML files from `data/raw/editxml/`
+- Extracts which parts of the original video were used (in/out times)
+- Filters out non-video clips (graphics, titles, etc.)
+- Generates active/inactive labels at 0.1-second intervals
+- Outputs to `data/processed/active_labels/`
+
+**Telop Extraction** (`extract_telop_from_xml.py`):
+- Decodes Base64-encoded telop data from Premiere Pro XML
+- Extracts Japanese text content (hiragana, katakana, kanji)
+- Captures display timing (start/end times)
+- Outputs to `data/processed/telop_labels/`
+- See [Telop Extraction Guide](docs/TELOP_EXTRACTION_GUIDE.md) for details
+
+**3.3. Add Temporal Features (minutes)**
 
 ```bash
 # Add moving averages, rate of change, CLIP similarity, etc.
 python scripts\add_temporal_features.py
 ```
 
-**5. Create Full Video Dataset (minutes)**
+**3.4. Create Full Video Dataset (minutes)**
 
 ```bash
 # Prepare data for Full Video training
 python scripts\create_cut_selection_data_enhanced_fullvideo.py
 ```
 
-**6. Execute Training (1-2 hours, GPU recommended)**
+**3.5. Execute Training (1-2 hours, GPU recommended)**
 
 ```bash
-# Full Video training
+# Full Video training (with real-time visualization)
 batch\train_fullvideo.bat
 
 # Real-time visualization
 # Open checkpoints_cut_selection_fullvideo/view_training.html in browser
+# Auto-refreshes every 5 seconds during training
 ```
 
 **Training Features**:
@@ -140,24 +228,39 @@ batch\train_fullvideo.bat
 - Learn optimal threshold that satisfies 90-200s constraint per video
 - Early Stopping: Automatically stops when performance stops improving
 - Mixed Precision: Efficient GPU VRAM usage
+- Real-time Visualization: 6 graphs updated every epoch
 
 **Output**: 
 - `checkpoints_cut_selection_fullvideo/best_model.pth` (trained model)
 - `training_history.csv` (training history)
-- `training_progress.png` (training graphs)
-- `view_training.html` (real-time visualization)
+- `training_progress.png` (real-time training graphs - 6 panels)
+- `training_final.png` (final training graphs)
+- `view_training.html` (real-time HTML viewer with auto-refresh)
 
 ---
 
-### 📊 Current Performance (Verified 2025-12-26)
+### 📊 Current Performance (Updated 2026-03-21)
 
 #### Full Video Model ✅ Recommended
 
-**Training Performance** (Epoch 9):
-- F1 Score: 52.90%
-- Recall: 80.65% (detects 80% of cuts that should be adopted)
-- Precision: 38.94%
-- Accuracy: 62.89%
+**Training Performance** (Best: Round 1, Epoch 41):
+- **Recall**: 87.16% (detects 87% of cuts that should be adopted)
+- **F1 Score**: 57.35%
+- **Precision**: 42.73%
+- **Training Time**: ~41 epochs (with early stopping)
+- **Prediction**: Pure argmax (no active ratio constraint)
+
+**Training Strategy**:
+- Target: recall >= 75%, precision >= 35%
+- Best model saved when both targets met, ranked by F1
+- If targets not met, best recall model is saved
+- No active ratio constraint — pure argmax prediction
+
+**Training Details**:
+- Checkpoint dir: `checkpoints_cut_selection_fullvideo_v2/`
+- Archive: `archive/checkpoints_f1_optimized_v1_20260321_185106/`
+
+![Training Results](docs/training_final_2025-12-26.png)
 
 **Inference Test Results** (bandicam 2025-05-11 19-25-14-768.mp4):
 - Video length: 1000.1s (approx. 16.7 minutes)
@@ -171,6 +274,7 @@ batch\train_fullvideo.bat
 - ✅ Satisfies 90s or more and 200s or less constraint
 - ✅ Nearly perfectly matches target 180s (3 minutes)
 - ✅ Per-video optimization (searches for optimal threshold per video)
+- ✅ Efficient training with early stopping (saves ~78% of training time)
 
 **Details**: [Inference Test Results Report](docs/INFERENCE_TEST_RESULTS.md)
 
@@ -180,7 +284,7 @@ Under improvement due to sequence splitting issues. See [K-Fold Results Report](
 
 ---
 
-### 💡 For More Details
+### � For More oDetails
 
 - **How to Create Training Data**: [Creating Training Data (Most Important)](#-creating-training-data-most-important)
 - **Detailed Usage**: [Quick Start](#-quick-start)
@@ -211,15 +315,11 @@ Under improvement due to sequence splitting issues. See [K-Fold Results Report](
 
 **This project is currently focused on Cut Selection.**
 
-- ✅ **Cut Selection Model**: Full Video Model recommended (inference test successful)
-  - Automatically searches for optimal threshold that satisfies 90-200s constraint
-  - Nearly perfectly matches target 180s (+1.9s)
+- ✅ **Cut Selection Model**: Full Video Model (Recall=87.16%, F1=57.35%, Precision=42.73%)
+  - Auto Training Loop: automatically adjusts hyperparameters across rounds until targets are met
+  - Pure argmax prediction — no active ratio constraint
   - Premiere Pro XML generation successful
-  - Legacy K-Fold model under improvement (sequence splitting issues)
 - ⚠️ **Graphic Placement & Telop Generation**: Future task due to low accuracy
-  - Current multimodal model (audio, video, track integration) has not reached practical accuracy for graphic placement and telop generation
-  - Focusing on cut selection achieves higher quality automatic editing
-  - Graphic and telop features planned for future improvement
 
 ## 🎯 Features
 
@@ -232,6 +332,23 @@ Under improvement due to sequence splitting issues. See [K-Fold Results Report](
 - **Clip Filtering**: Exclude too-short clips, gap merging, prioritization
 - **Premiere Pro Integration**: Open generated XML directly in Premiere Pro
 - **Real-time Training Visualization**: Monitor training status with 6 graphs
+- **Enhanced Whisper Transcription**: Improved speech recognition accuracy
+  - Larger models support (medium, large, large-v3)
+  - Audio preprocessing (noise reduction, normalization)
+  - VAD (Voice Activity Detection)
+  - Content-type specific prompts
+  - Text content analysis (emotion, topic, keywords)
+  - See [Whisper Enhancement Guide](docs/WHISPER_ENHANCEMENT_GUIDE.md) for details
+- **Audio Separation for Whisper**: Separate game audio from voice to improve transcription
+  - Demucs-based vocal separation
+  - 10-30% WER improvement on gaming videos
+  - Automatic caching and quality evaluation
+  - See [Audio Separation Guide](docs/AUDIO_SEPARATION_GUIDE.md) for details
+- **Telop Extraction from XML**: Extract subtitle information from Premiere Pro XML
+  - Decodes Base64-encoded telop data
+  - Extracts Japanese text content and display timing
+  - 3,262 telops extracted from 109 videos (99.1% success rate)
+  - See [Telop Extraction Guide](docs/TELOP_EXTRACTION_GUIDE.md) for details
 
 ### Planned Features (After Accuracy Improvement)
 - **Automated Graphic Placement**: Character sprite placement, scale, and position adjustment
@@ -394,23 +511,55 @@ python -m src.data_preparation.extract_video_features_parallel \
   - CLIP embedding (512 dimensions, image semantic understanding)
   - MediaPipe face detection (10 dimensions, face position/expression)
   - Scene change, motion detection
-- **Text**:
-  - Whisper speech recognition (used as `text_is_active`)
+- **Text Analysis (15 dimensions)**: ✨ NEW!
+  - **Language Detection**: Automatic language identification (ja/en/mixed)
+  - **Emotion Analysis**: Positive, negative, excited, question, neutral
+  - **Topic Classification**: Game, tech, entertainment, daily, tutorial
+  - **Speech Metrics**: Character count, word count, speech rate
+  - **Keywords**: Important keywords extraction
+  
+  See [Text Analysis Features](docs/TEXT_ANALYSIS_FEATURES.md) for details.
+- **Excitement Detection (789 dimensions)**: ✨ NEW!
+  - **Transformer Embeddings (768 dims)**: Semantic understanding using Japanese BERT
+  - **Basic Statistics (5 dims)**: Speech presence, density, timing
+  - **Emotion Features (5 dims)**: Positive/excited intensity, laughter detection
+  - **Topic Change (5 dims)**: Climax keywords, semantic similarity, topic shifts
+  - **Speech Patterns (5 dims)**: Burst intensity, rhythm variance, acceleration
+  
+  See [Excitement Feature Guide](docs/EXCITEMENT_FEATURE_GUIDE.md) for details.
+
+**Total Features**: 1541 dimensions (215 audio + 522 video + 15 text + 789 excitement)
 
 ### Step 4: Label Extraction
 
 ```bash
 # Automatically extract "adopted/not adopted" labels from Premiere Pro XML
-python -m src.data_preparation.extract_active_labels \
-    --xml_dir editxml \
-    --feature_dir data/processed/source_features \
-    --output_dir data/processed/active_labels
+python scripts/extract_active_labels.py
 ```
 
 What this script does:
-- Get time ranges of adopted clips from XML files
-- Assign `Active(1)` / `Inactive(0)` labels to each frame in feature files
+- Reads XML files from `data/raw/editxml/`
+- Extracts time ranges of adopted clips (in/out times from original video)
+- Filters out non-video clips (graphics, titles, etc.) - only processes original video clips
+- Assigns `Active(1)` / `Inactive(0)` labels to each 0.1-second interval
+- Uses source video duration from feature files for accurate labeling
 - Output: `data/processed/active_labels/video1_active.csv`
+
+**Key Features:**
+- **Smart Clip Filtering**: Only processes clips from the original video (matches XML filename)
+- **Accurate Duration**: Uses feature file duration to ensure complete coverage
+- **Detailed Statistics**: Shows adoption rate, time range, and sample counts
+- **Error Handling**: Gracefully handles missing files and provides clear warnings
+
+**Example Output:**
+```
+[1/30] video1.xml
+    元動画の長さ: 600.0秒
+  OK 抽出完了: 6001行
+    採用: 1200サンプル (20.0%)
+    不採用: 4801サンプル (80.0%)
+    時間範囲: 0.0秒 ~ 600.0秒
+```
 
 ### Step 5: Create Training Dataset
 
@@ -464,6 +613,7 @@ train_cut_selection.bat
 - [Inference Test Results](docs/INFERENCE_TEST_RESULTS.md)
 - [Overall Project Flow](docs/guides/PROJECT_WORKFLOW_GUIDE_GUIDE.md)
 - [Required Files List](docs/guides/REQUIRED_FILES_BY_PHASE.md)
+- [Telop Extraction Guide](docs/TELOP_EXTRACTION_GUIDE.md)
 
 ## 🔧 Development
 
@@ -496,20 +646,24 @@ python scripts/create_cut_selection_data_enhanced_fullvideo.py
 ```bash
 # 1. Data preparation (see above)
 
-# 2. Execute training
+# 2. Execute training (single run)
 batch/train_fullvideo.bat
 
-# 3. Check training status
-# Open checkpoints_cut_selection_fullvideo/view_training.html in browser
+# 3. Or use Auto Training Loop (recommended — auto-adjusts until targets met)
+python scripts/auto_train_loop.py --max-rounds 8 --target-recall 0.75 --min-precision 0.35
+
+# 4. Check training status
+# Open checkpoints_cut_selection_fullvideo_v2/view_training.html in browser
 ```
 
 **Training Parameters**:
 - Batch size: 1 (1 video = 1 sample)
-- Max epochs: 500
-- Early Stopping: 100 epochs
+- Max epochs: 300
+- Early Stopping: 40 epochs
 - Learning rate: 0.0001
 - Optimizer: AdamW
-- Loss function: Focal Loss + TV Regularization + Adoption Penalty
+- Loss function: CrossEntropy with label smoothing
+- Prediction: Pure argmax (no active ratio constraint)
 
 ### Testing
 
@@ -544,19 +698,19 @@ python scripts/generate_xml_from_inference.py "path/to/video.mp4"
 
 #### Training Performance
 
-**Best Model**: Epoch 9
+**Best Model**: Round 1, Epoch 41
 
 | Metric | Value |
 |--------|-------|
-| F1 Score | 52.90% |
-| Recall | 80.65% |
-| Precision | 38.94% |
-| Accuracy | 62.89% |
+| Recall | 87.16% |
+| F1 Score | 57.35% |
+| Precision | 42.73% |
 
 **Features**:
-- Detects 80% or more of cuts that should be adopted (high Recall)
-- Per-video optimization with 1 video = 1 sample
-- Automatically learns threshold that satisfies 90-200s constraint per video
+- Detects 87% of cuts that should be adopted (high Recall)
+- Pure argmax prediction — no active ratio constraint
+- Auto Training Loop adjusts hyperparameters automatically across rounds
+- Best model criteria: recall >= 75% AND precision >= 35%, ranked by F1
 
 #### Inference Performance
 
@@ -646,9 +800,14 @@ For detailed result analysis, see [Final Results Report](docs/FINAL_RESULTS.md) 
 ### Current Issues
 
 #### 1. Telop-Related
-- **Telops not included in features due to Base64 encoding**
-  - Cannot utilize telop content and position information in training due to Premiere Pro's Base64 encoding format
-  - Telop information detected by OCR not reflected in training data
+- **✅ Telop extraction implemented**
+  - Successfully decodes Base64-encoded telop data from Premiere Pro XML
+  - Extracts Japanese text content and display timing
+  - 3,262 telops extracted from 109 videos (99.1% success rate)
+  - See [Telop Extraction Guide](docs/TELOP_EXTRACTION_GUIDE.md)
+- **Telops not yet included in training features**
+  - Telop information not yet utilized in model training
+  - Future work: Add telop density, text analysis as features
 - **Telop XML output not supported**
   - Function to output learned telop information to XML not implemented
   - Currently addressed by disabling telop generation (`configs/config_telop_generation.yaml`)
@@ -698,7 +857,7 @@ For detailed result analysis, see [Final Results Report](docs/FINAL_RESULTS.md) 
 ### Planned Improvements (By Priority)
 
 #### High Priority (Remaining)
-- [ ] **Telop decoding**: Decode Base64-encoded telops and include in features
+- [ ] **Telop features integration**: Include telop density and text analysis in training features
 - [ ] **Telop XML output**: Implement function to output learned telop information to XML
 - [ ] **Asset ID management improvement**: Feature-based matching or role-based ID management
 - [ ] **Track placement improvement**: Distribute to multiple tracks for easier editing XML
@@ -716,8 +875,11 @@ For detailed result analysis, see [Final Results Report](docs/FINAL_RESULTS.md) 
 
 ### Technical Debt
 
+#### Resolved
+- **✅ Base64 telop decoding implemented**: Successfully decodes and extracts telop information from Premiere Pro XML
+
 #### Unresolved (Functionality)
-- **Base64 format analysis processing not implemented**: Need analysis and decoding processing for Premiere Pro's Base64 encoding format
+- **Telop features not yet integrated**: Need to add telop density and text analysis to training features
 - **XML parser limitations**: Nested sequences and multicam clips not supported
 - **Asset ID management issues**: Filename-based ID assignment lacks versatility
 - **Single track placement limitation**: Need modification to support multiple tracks

@@ -1,0 +1,99 @@
+# Audio Separation Configuration
+# Whisper音声認識精度向上のための音声分離設定
+
+# Enable/disable audio separation
+enabled: true  # Set to true to enable (デフォルトは無効)
+
+# Separation model
+model:
+  # Model type: "demucs" (high quality)
+  # Note: Spleeter is not compatible with Python 3.11+
+  # 推奨: demucs（高品質、2-5分/10分動画）
+  type: "demucs"
+  
+  # Quality preset: "fast", "balanced", "high"
+  # fast: mdx モデル（2-3分）
+  # balanced: htdemucs モデル（3-5分、推奨）
+  # high: htdemucs_ft モデル（5-10分、最高品質）
+  quality: "balanced"
+  
+  # Device: "cuda", "cpu", "auto"
+  # auto: GPUが利用可能ならGPU、なければCPU
+  device: "auto"
+
+# Cache settings
+cache:
+  # Cache directory
+  # 分離済み音声のキャッシュディレクトリ
+  directory: "preprocessed_data/audio_cache"
+  
+  # Enable caching
+  # キャッシュを有効化（再処理を高速化）
+  enabled: true
+  
+  # Cache retention (days)
+  # キャッシュの保持期間（日数）
+  max_age_days: 30
+
+# Quality thresholds
+quality:
+  # Minimum SDR for acceptable separation (dB)
+  # 許容可能な分離品質の最小SDR（デシベル）
+  # SDR < 5dB の場合、元の音声にフォールバック
+  min_sdr: 5.0
+  
+  # Minimum WER improvement to consider separation beneficial (%)
+  # 分離が有益と判断するための最小WER改善率（%）
+  # WER改善 < 5% の場合、警告を表示
+  min_wer_improvement: 5.0
+
+# Performance settings
+performance:
+  # Timeout for separation (seconds)
+  # 分離処理のタイムアウト（秒）
+  timeout: 300
+  
+  # Maximum memory usage (GB)
+  # 最大メモリ使用量（GB）
+  max_memory_gb: 4.0
+
+# Fallback behavior
+fallback:
+  # Try alternative models on failure
+  # 失敗時に代替モデルを試行
+  try_alternatives: true
+  
+  # Models to try in order
+  # 試行するモデルの優先順位
+  # Note: Only demucs is available (spleeter requires Python <3.11)
+  model_priority: ["demucs"]
+
+# Content-type presets
+# コンテンツタイプ別のプリセット設定
+presets:
+  # Gaming content (ゲーム実況)
+  gaming:
+    model: "demucs"
+    quality: "balanced"
+    min_sdr: 5.0
+  
+  # Tutorial content (チュートリアル)
+  tutorial:
+    model: "demucs"
+    quality: "balanced"
+    min_sdr: 6.0
+  
+  # Interview content (インタビュー)
+  interview:
+    model: "demucs"
+    quality: "high"
+    min_sdr: 8.0
+
+# Logging settings
+logging:
+  # Log separation metrics
+  # 分離メトリクスをログに記録
+  log_metrics: true
+  
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"

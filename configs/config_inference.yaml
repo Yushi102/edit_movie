@@ -68,6 +68,20 @@ feature_extraction:
   # Analysis frame width for visual features
   analysis_width: 640
 
+# Default video parameters (used when video metadata cannot be read)
+default_video:
+  # Default frame rate (fps)
+  fps: 60.0
+  
+  # Default resolution (width x height)
+  # Common resolutions:
+  # - 1920x1080 (Full HD horizontal)
+  # - 1080x1920 (Full HD vertical)
+  # - 3840x2160 (4K horizontal)
+  # - 2160x3840 (4K vertical)
+  width: 1080
+  height: 1920
+
 # Model parameters
 model:
   # Number of tracks

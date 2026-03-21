@@ -1,0 +1,134 @@
+# Whisper Configuration
+# Whisperの音声認識設定
+
+# モデル設定
+model:
+  # モデルサイズ: tiny, base, small, medium, large, large-v2, large-v3
+  # 推奨: medium（精度と速度のバランス）、large-v3（最高精度）
+  size: "medium"
+  
+  # デバイス: cuda, cpu, null (自動選択)
+  device: null
+
+# 言語設定
+language:
+  # 言語コード: ja (日本語), en (英語), null (自動検出)
+  # 推奨: 言語を指定すると精度が向上
+  code: "ja"
+  
+  # 自動検出の信頼度閾値
+  auto_detect_threshold: 0.5
+
+# 音声前処理
+preprocessing:
+  # 前処理を有効化
+  enabled: true
+  
+  # ノイズ除去
+  reduce_noise: true
+  
+  # 正規化
+  normalize: true
+  
+  # 無音トリミング
+  trim_silence: true
+
+# VAD (Voice Activity Detection)
+vad:
+  # VADを有効化
+  enabled: true
+  
+  # VAD閾値（0.0-1.0）
+  threshold: 0.5
+  
+  # 最小発話時間（秒）
+  min_speech_duration: 0.25
+
+# 文字起こしパラメータ
+transcription:
+  # 単語レベルのタイムスタンプ
+  word_timestamps: true
+  
+  # 温度パラメータ（0.0=決定的、1.0=ランダム）
+  # 推奨: 0.0（一般）、0.2（ゲーム実況など）
+  temperature: 0.0
+  
+  # ビームサーチのビーム数
+  # 推奨: 5（一般）、10（高精度）
+  beam_size: 5
+  
+  # 候補数
+  best_of: 5
+  
+  # ビームサーチの忍耐度
+  patience: 1.0
+  
+  # 前のテキストを条件付け
+  condition_on_previous_text: true
+  
+  # 圧縮率の閾値
+  compression_ratio_threshold: 2.4
+  
+  # 対数確率の閾値
+  logprob_threshold: -1.0
+  
+  # 無音判定の閾値
+  no_speech_threshold: 0.6
+
+# 初期プロンプト（コンテンツタイプ別）
+prompts:
+  # 一般
+  general: null
+  
+  # ゲーム実況
+  gaming: "ゲーム実況、プレイ、攻略、クリア、レベル、スキル、アイテム、ボス、敵、キャラクター"
+  
+  # 技術解説
+  technical: "プログラミング、コード、開発、AI、機械学習、アルゴリズム、技術、システム、データ"
+  
+  # インタビュー
+  interview: null
+  
+  # 講義
+  lecture: "講義、解説、説明、授業、学習、教育、理論、実践"
+  
+  # エンタメ
+  entertainment: "映画、アニメ、音楽、ドラマ、芸能、エンターテイメント"
+
+# コンテンツタイプ別の推奨設定
+content_types:
+  general:
+    model_size: "medium"
+    temperature: 0.0
+    beam_size: 5
+    
+  gaming:
+    model_size: "medium"
+    temperature: 0.2
+    beam_size: 5
+    
+  technical:
+    model_size: "large-v3"
+    temperature: 0.0
+    beam_size: 10
+    
+  interview:
+    model_size: "medium"
+    temperature: 0.0
+    beam_size: 5
+    
+  lecture:
+    model_size: "large-v2"
+    temperature: 0.0
+    beam_size: 10
+
+# パフォーマンス設定
+performance:
+  # FP16を使用（GPUのみ）
+  fp16: true
+  
+  # バッチサイズ
+  batch_size: 1
+  
+  # スレッド数（CPUのみ）
+  num_threads: 4

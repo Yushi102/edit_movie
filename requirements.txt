@@ -22,6 +22,10 @@ scipy>=1.10.0
 # NLP & Embeddings
 # 動作確認済みバージョン: transformers==4.57.3
 transformers>=4.30.0
+sentencepiece>=0.1.99  # Tokenizer for Japanese BERT
+fugashi>=1.2.0  # Japanese morphological analyzer
+ipadic>=1.0.0  # Dictionary for fugashi
+unidic-lite>=1.0.8  # Lightweight Japanese dictionary
 
 # Audio Processing & Speech Recognition
 # 動作確認済みバージョン: openai-whisper==20250625, librosa==0.11.0, soundfile==0.13.1, pydub==0.25.1
@@ -29,6 +33,12 @@ openai-whisper>=20231117
 librosa>=0.10.0
 soundfile>=0.12.0
 pydub>=0.25.0
+noisereduce>=3.0.0  # 音声前処理（ノイズ除去）
+
+# Audio Separation (for Whisper enhancement)
+# Note: Spleeter requires Python <3.11, so we use Demucs instead
+demucs>=4.0.0    # High-quality audio separation (vocals/accompaniment)
+museval>=0.4.0   # Audio quality metrics (SDR, SIR, SAR)
 
 # Speaker Diarization & Identification
 # 動作確認済みバージョン: pyannote.audio==3.1.1
@@ -45,6 +55,7 @@ pyyaml>=6.0
 # Testing
 # 動作確認済みバージョン: pytest==9.0.2
 pytest>=7.4.0
+hypothesis>=6.0.0  # Property-based testing
 
 # Utilities
 # 動作確認済みバージョン: tqdm==4.67.1, pillow==11.3.0

@@ -36,7 +36,9 @@ class MultimodalDataset(Dataset):
         visual_preprocessor: Optional[VisualFeaturePreprocessor] = None,  # Not used
         enable_multimodal: bool = True,
         tolerance: float = 0.05,  # Not used
-        use_text_embedding: bool = True  # Not used
+        use_text_embedding: bool = True,  # Not used
+        active_threshold: float = 0.0,  # Threshold for converting active values to binary
+        strict_dimension_check: bool = True  # Whether to raise error on dimension mismatch
     ):
         """
         Initialize MultimodalDataset
@@ -49,13 +51,18 @@ class MultimodalDataset(Dataset):
             enable_multimodal: Whether to use multimodal features
             tolerance: Not used (kept for compatibility)
             use_text_embedding: Not used (kept for compatibility)
+            active_threshold: Threshold for converting active values to binary (default: 0.0)
+                            Values > threshold become 1 (active), values <= threshold become 0 (inactive)
+            strict_dimension_check: Whether to raise error on dimension mismatch (default: True)
         """
         self.enable_multimodal = enable_multimodal
+        self.active_threshold = active_threshold
+        self.strict_dimension_check = strict_dimension_check
         
         # Load integrated sequences
         logger.info(f"Loading integrated sequences from {sequences_npz}")
         data = np.load(sequences_npz)
-        self.sequences = data['sequences']  # (N, seq_len, 917)
+        self.sequences = data['sequences']  # (N, seq_len, 977)
         self.masks = data['masks']  # (N, seq_len)
         self.video_ids = data.get('video_ids', None)
         self.source_video_names = data.get('source_video_names', None)
@@ -65,14 +72,22 @@ class MultimodalDataset(Dataset):
         # 977 = audio(215) + visual(522) + track(240)
         self.audio_dim = 215
         self.visual_dim = 522
-        self.track_dim = 240
+        self.track_dim = 240  # 20 tracks × 12 parameters
         
         total_dim = self.sequences.shape[2]
         expected_dim = self.audio_dim + self.visual_dim + self.track_dim
         
         if total_dim != expected_dim:
-            logger.warning(f"Dimension mismatch: expected {expected_dim}, got {total_dim}")
-            logger.warning(f"  Audio: {self.audio_dim}, Visual: {self.visual_dim}, Track: {self.track_dim}")
+            error_msg = (
+                f"Dimension mismatch: expected {expected_dim}, got {total_dim}\n"
+                f"  Audio: {self.audio_dim}, Visual: {self.visual_dim}, Track: {self.track_dim}\n"
+                f"  Total: {self.audio_dim} + {self.visual_dim} + {self.track_dim} = {expected_dim}"
+            )
+            if self.strict_dimension_check:
+                raise ValueError(error_msg)
+            else:
+                logger.warning(error_msg)
+                logger.warning("  Continuing with mismatched dimensions (strict_dimension_check=False)")
         
         logger.info(f"MultimodalDataset initialized:")
         logger.info(f"  Total sequences: {len(self.sequences)}")
@@ -82,6 +97,8 @@ class MultimodalDataset(Dataset):
         logger.info(f"  Visual dimensions: {self.visual_dim}")
         logger.info(f"  Track dimensions: {self.track_dim}")
         logger.info(f"  Enable multimodal: {self.enable_multimodal}")
+        logger.info(f"  Active threshold: {self.active_threshold}")
+        logger.info(f"  Strict dimension check: {self.strict_dimension_check}")
     
     def _get_video_id(self, idx: int) -> str:
         """Get video ID for a given index"""
@@ -131,13 +148,14 @@ class MultimodalDataset(Dataset):
             modality_mask[:, 1] = False  # No visual
         
         # Reshape track sequence to (seq_len, 20, 12) for targets
-        # Note: track_features is (seq_len, 240) = (seq_len, 20, 12)
+        # Note: track_features is (seq_len, 240) = (seq_len, 20 tracks, 12 parameters)
+        # Parameters: active, asset, scale, pos_x, pos_y, anchor_x, anchor_y, rotation, crop_l, crop_r, crop_t, crop_b
         targets = track_features.reshape(seq_len, 20, 12)
         
         # Convert active values to binary (0 or 1)
-        # Active values are normalized, so we need to threshold them
-        # Positive values -> 1 (active), Negative values -> 0 (inactive)
-        targets[:, :, 0] = (targets[:, :, 0] > 0).astype(np.float32)
+        # Active values are in the first parameter (index 0)
+        # Apply threshold: values > threshold become 1 (active), values <= threshold become 0 (inactive)
+        targets[:, :, 0] = (targets[:, :, 0] > self.active_threshold).astype(np.float32)
         
         # Convert to tensors
         sample = {
@@ -191,10 +209,12 @@ def create_multimodal_dataloaders(
     audio_preprocessor_path: Optional[str] = None,
     visual_preprocessor_path: Optional[str] = None,
     batch_size: int = 32,
-    num_workers: int = 0,
+    num_workers: int = 4,  # Changed from 0 to 4 for better performance
     shuffle_train: bool = True,
     pin_memory: bool = True,
-    enable_multimodal: bool = True
+    enable_multimodal: bool = True,
+    active_threshold: float = 0.0,
+    strict_dimension_check: bool = True
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train and validation dataloaders for multimodal data
@@ -206,10 +226,14 @@ def create_multimodal_dataloaders(
         audio_preprocessor_path: Path to saved AudioFeaturePreprocessor
         visual_preprocessor_path: Path to saved VisualFeaturePreprocessor
         batch_size: Batch size
-        num_workers: Number of worker processes for data loading
+        num_workers: Number of worker processes for data loading (default: 4)
+                    Recommended: 4-8 for CPU, 4-8 for GPU training
+                    Set to 0 for debugging or if multiprocessing causes issues
         shuffle_train: Whether to shuffle training data
         pin_memory: Whether to pin memory for faster GPU transfer
         enable_multimodal: Whether to enable multimodal features
+        active_threshold: Threshold for converting active values to binary
+        strict_dimension_check: Whether to raise error on dimension mismatch
     
     Returns:
         (train_loader, val_loader)
@@ -235,7 +259,9 @@ def create_multimodal_dataloaders(
         audio_preprocessor=audio_preprocessor,
         visual_preprocessor=visual_preprocessor,
         enable_multimodal=enable_multimodal,
-        use_text_embedding=True  # Enable text embedding
+        use_text_embedding=True,  # Enable text embedding
+        active_threshold=active_threshold,
+        strict_dimension_check=strict_dimension_check
     )
     
     val_dataset = MultimodalDataset(
@@ -244,7 +270,9 @@ def create_multimodal_dataloaders(
         audio_preprocessor=audio_preprocessor,
         visual_preprocessor=visual_preprocessor,
         enable_multimodal=enable_multimodal,
-        use_text_embedding=True  # Enable text embedding
+        use_text_embedding=True,  # Enable text embedding
+        active_threshold=active_threshold,
+        strict_dimension_check=strict_dimension_check
     )
     
     # Create dataloaders

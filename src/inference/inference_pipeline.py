@@ -19,8 +19,6 @@ from src.training.multimodal_preprocessing import AudioFeaturePreprocessor, Visu
 from src.utils.feature_alignment import FeatureAligner
 from src.utils.config_loader import load_telop_config
 
-# pdはすでにインポート済み
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -1544,10 +1542,10 @@ class InferencePipeline:
         
         logger.info(f"  Total AI telops: {len(ai_telops)}")
         
-        # OTIOを使ってXMLを生成（音声クリップはXMLレベルで修正）
-        from src.inference.otio_xml_generator import create_premiere_xml_with_otio
+        # XMLを直接生成（Premiere Pro互換）
+        from src.inference.direct_xml_generator import create_premiere_xml_direct
         
-        xml_path = create_premiere_xml_with_otio(
+        xml_path = create_premiere_xml_direct(
             video_path=self.video_path,
             video_name=video_name,
             total_frames=seq_len,

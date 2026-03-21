@@ -1,0 +1,105 @@
+# Excitement Feature Configuration
+# 音声内容の盛り上がり度検出機能の設定
+
+# Transformer設定
+transformer:
+  model_name: "cl-tohoku/bert-base-japanese-v3"
+  embedding_dim: 768
+  batch_size: 32
+  cache_size: 10000
+  use_gpu: true
+
+# 特徴量計算設定
+feature_computation:
+  sampling_rate: 0.1  # 秒
+  emotion_window: 10.0  # 秒（感情分散計算用）
+  speech_burst_threshold: 20.0  # 文字/秒（バースト検出閾値）
+  
+  # クライマックスキーワード（日本語）
+  climax_keywords_ja:
+    - "やばい"
+    - "ヤバい"
+    - "ヤバイ"
+    - "やばっ"
+    - "すごい"
+    - "スゴい"
+    - "スゴイ"
+    - "すげー"
+    - "すげえ"
+    - "マジ"
+    - "まじ"
+    - "マジで"
+    - "まじで"
+    - "キター"
+    - "きたー"
+    - "キタ"
+    - "きた"
+    - "ヤッター"
+    - "やったー"
+    - "やった"
+    - "最高"
+    - "サイコー"
+    - "さいこう"
+    - "神"
+    - "かみ"
+  
+  # クライマックスキーワード（英語）
+  climax_keywords_en:
+    - "wow"
+    - "omg"
+    - "amazing"
+    - "awesome"
+    - "incredible"
+    - "yes"
+    - "yeah"
+    - "yay"
+    - "woohoo"
+  
+  # 笑い指標（日本語）
+  laughter_indicators_ja:
+    - "笑"
+    - "ｗ"
+    - "w"
+    - "W"
+    - "ｗｗｗ"
+    - "www"
+    - "WWW"
+    - "草"
+  
+  # 笑い指標（英語）
+  laughter_indicators_en:
+    - "lol"
+    - "LOL"
+    - "haha"
+    - "HAHA"
+    - "hehe"
+    - "HEHE"
+    - "lmao"
+    - "LMAO"
+
+# 盛り上がり検出設定
+excitement_detection:
+  enable_emotion_analysis: true
+  enable_topic_change_detection: true
+  enable_speech_pattern_analysis: true
+  
+  # 盛り上がりスコアの重み
+  excitement_score_weights:
+    climax: 0.25
+    laughter: 0.20
+    positive: 0.15
+    excited: 0.25
+    speech: 0.15
+
+# パフォーマンス設定
+performance:
+  num_workers: 4
+  max_memory_gb: 8
+  enable_caching: true
+  log_level: "INFO"
+
+# デバッグ設定
+debug:
+  save_intermediate_results: false
+  verbose_logging: false
+  profile_performance: false

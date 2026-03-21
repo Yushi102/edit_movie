@@ -164,6 +164,11 @@ class ModalityFusion(nn.Module):
             visual_mask = modality_mask[:, :, 1:2]  # (batch, seq_len, 1)
             track_mask = modality_mask[:, :, 2:3]  # (batch, seq_len, 1)
             
+            # Expand masks to match d_model dimension for proper broadcasting
+            audio_mask = audio_mask.expand(-1, -1, audio_emb.size(-1))  # (batch, seq_len, d_model)
+            visual_mask = visual_mask.expand(-1, -1, visual_emb.size(-1))  # (batch, seq_len, d_model)
+            track_mask = track_mask.expand(-1, -1, track_emb.size(-1))  # (batch, seq_len, d_model)
+            
             # Zero out unavailable modalities
             audio_emb = audio_emb * audio_mask.float()
             visual_emb = visual_emb * visual_mask.float()

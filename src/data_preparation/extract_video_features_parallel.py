@@ -11,15 +11,17 @@ Video Feature Extraction Script (並列処理版)
 - エラーハンドリング強化
 - 話者識別機能（pyannote.audio）
 - 感情表現検出（ピッチ、MFCC、スペクトル特徴）
+- 盛り上がり度検出（Transformer埋め込み、感情、トピック変化）
 
 【抽出される特徴量】
-- 音声: 215次元
+- 音声: 1004次元
   - 基本: 4次元 (rms, speaking, silence, speaker_id)
   - 話者埋め込み: 192次元 (speaker embedding)
   - 感情表現: 16次元 (pitch, pitch_std, spectral_centroid, zcr, mfcc×13)
   - テキスト: 3次元 (text_active, telop_active, + 文字列)
+  - 盛り上がり度: 789次元 (Transformer 768 + 統計 5 + 同時発話 1 + 感情 5 + トピック 5 + 発話パターン 5)
 - 視覚: 522次元 (10スカラー + 512 CLIP)
-- 合計: 737次元 (215 + 522)
+- 合計: 1526次元 (1004 + 522)
 """
 import os
 import argparse
@@ -41,7 +43,12 @@ from joblib import Parallel, delayed
 from typing import List, Dict, Any, Optional, Tuple
 import warnings
 import sys
+import logging
+
 warnings.filterwarnings('ignore')
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 # Speaker Diarization
 try:
@@ -60,9 +67,16 @@ except ImportError:
 TIME_STEP = 0.1              # 基本サンプリング (0.1秒 = 10 FPS)
 CLIP_STEP = 1.0              # CLIP解析間隔 (1.0秒)
 ANALYSIS_WIDTH = 640         # 解析用画像の横幅
-WHISPER_MODEL_SIZE = "small" # Whisperモデル
+WHISPER_MODEL_SIZE = "small" # Whisperモデル（デフォルト）
 CLIP_MODEL_NAME = "openai/clip-vit-base-patch32"
 N_JOBS = 4                   # 並列処理数（CPUコア数に応じて調整）
+
+# Whisper Enhanced Settings
+USE_ENHANCED_WHISPER = os.getenv("USE_ENHANCED_WHISPER", "true").lower() == "true"  # Changed default to true
+ENHANCED_WHISPER_MODEL = os.getenv("ENHANCED_WHISPER_MODEL", "large-v3")  # medium, large, large-v3
+WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "ja")  # ja, en, null
+WHISPER_ENABLE_PREPROCESSING = os.getenv("WHISPER_ENABLE_PREPROCESSING", "true").lower() == "true"
+WHISPER_ENABLE_VAD = os.getenv("WHISPER_ENABLE_VAD", "true").lower() == "true"
 
 # Speaker Identification
 SPEAKER_EMBEDDING_MODEL = "speechbrain/spkrec-ecapa-voxceleb"  # 192次元の話者埋め込み
@@ -84,6 +98,12 @@ if USE_GPU:
 print(f"Parallel Jobs: {N_JOBS}")
 print(f"Sampling Rate: {1.0/TIME_STEP:.1f} FPS")
 print(f"CLIP Interval: {CLIP_STEP}s")
+print(f"Whisper: {'Enhanced' if USE_ENHANCED_WHISPER else 'Standard'}")
+if USE_ENHANCED_WHISPER:
+    print(f"  Model: {ENHANCED_WHISPER_MODEL}")
+    print(f"  Language: {WHISPER_LANGUAGE}")
+    print(f"  Preprocessing: {'Enabled' if WHISPER_ENABLE_PREPROCESSING else 'Disabled'}")
+    print(f"  VAD: {'Enabled' if WHISPER_ENABLE_VAD else 'Disabled'}")
 print(f"Speaker ID: {'Enabled' if ENABLE_SPEAKER_ID and PYANNOTE_AVAILABLE else 'Disabled'}")
 if ENABLE_SPEAKER_ID and PYANNOTE_AVAILABLE:
     print(f"  Model: {SPEAKER_EMBEDDING_MODEL}")
@@ -97,7 +117,18 @@ def extract_features_worker(video_path: str, output_dir: str):
     """
     1つの動画から特徴量を抽出（ワーカー関数）
     各プロセスで独立してモデルをロード
+    
+    メモリリーク対策:
+    - 明示的なGPUメモリ解放
+    - モデルの適切なクリーンアップ
+    - 例外時のリソース解放
     """
+    whisper_model = None
+    clip_model = None
+    clip_processor = None
+    speaker_model = None
+    face_mesh = None
+    
     try:
         # プロセス内でモデルをロード
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -109,7 +140,8 @@ def extract_features_worker(video_path: str, output_dir: str):
         try:
             clip_model = CLIPModel.from_pretrained(CLIP_MODEL_NAME, use_safetensors=True)
             clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
-        except:
+        except (OSError, ValueError) as e:
+            logger.warning(f"Failed to load CLIP model with safetensors, falling back to standard loading: {e}")
             clip_model = CLIPModel.from_pretrained(CLIP_MODEL_NAME)
             clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
         
@@ -117,7 +149,6 @@ def extract_features_worker(video_path: str, output_dir: str):
             clip_model = clip_model.to("cuda")
         
         # Speaker Embedding Model
-        speaker_model = None
         if ENABLE_SPEAKER_ID and PYANNOTE_AVAILABLE:
             try:
                 # Windowsでシンボリックリンクの問題を回避
@@ -129,17 +160,18 @@ def extract_features_worker(video_path: str, output_dir: str):
                 )
                 print(f"  OK: Speaker embedding model loaded: {SPEAKER_EMBEDDING_MODEL}")
             except Exception as e:
-                print(f"  WARNING: Failed to load speaker model: {e}")
-                print(f"     Speaker embeddings will be set to zeros")
+                print(f"  ERROR: Failed to load speaker model: {e}")
+                print(f"     This is a critical error. Speaker identification will be disabled.")
+                print(f"     Possible causes:")
+                print(f"       - Missing dependencies: pip install speechbrain")
+                print(f"       - Network issues downloading model")
+                print(f"       - Insufficient disk space")
+                print(f"     Speaker embeddings will be set to zeros (feature dimension: {SPEAKER_EMBEDDING_DIM})")
+                import traceback
+                print(f"     Traceback: {traceback.format_exc()}")
                 speaker_model = None
         
         # MediaPipe FaceMesh
-        # Note: MediaPipe may fail to initialize due to:
-        # - Non-ASCII characters in path (Japanese, Chinese, etc.) - MOST COMMON ISSUE
-        # - Missing dependencies (protobuf, opencv-contrib-python)
-        # - GPU/CUDA compatibility issues
-        # If initialization fails, face features will be set to default values (zeros)
-        face_mesh = None
         face_mesh_available = False
         try:
             mp_face_mesh = mp.solutions.face_mesh
@@ -152,14 +184,21 @@ def extract_features_worker(video_path: str, output_dir: str):
             face_mesh_available = True
             print(f"  OK: MediaPipe FaceMesh initialized successfully")
         except Exception as e:
-            print(f"  WARNING: MediaPipe FaceMesh initialization failed: {e}")
+            print(f"  ERROR: MediaPipe FaceMesh initialization failed: {e}")
+            print(f"     This is a known issue with non-ASCII paths or missing dependencies.")
             print(f"     Face features will be set to default values (zeros)")
-            print(f"     This won't affect other features (audio, visual, CLIP)")
             print(f"     Common causes:")
-            print(f"       - Non-ASCII characters in project path (日本語など)")
+            print(f"       - Non-ASCII characters in project path (日本語、中文など)")
             print(f"       - Missing dependencies: pip install mediapipe opencv-contrib-python")
-            print(f"     To fix path issue: Move project to ASCII-only path (e.g., C:\\projects\\xmlai)")
+            print(f"       - Incompatible MediaPipe version")
+            print(f"     Recommended fixes:")
+            print(f"       1. Move project to ASCII-only path (e.g., C:\\projects\\xmlai)")
+            print(f"       2. Reinstall: pip uninstall mediapipe && pip install mediapipe")
+            print(f"       3. Check OpenCV version: pip install opencv-python==4.8.0.74")
+            import traceback
+            print(f"     Traceback: {traceback.format_exc()}")
             face_mesh_available = False
+            face_mesh = None
         
         # 音声特徴量を抽出（テロップ情報と話者識別を含む）
         df_audio = _extract_audio_features(
@@ -194,20 +233,314 @@ def extract_features_worker(video_path: str, output_dir: str):
         }
         
     except Exception as e:
+        import traceback
         return {
             "file": Path(video_path).name,
             "status": "Error",
-            "message": str(e)
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        }
+    
+    finally:
+        # 明示的なメモリ解放（メモリリーク対策）
+        if face_mesh is not None:
+            try:
+                face_mesh.close()
+                logger.debug("Face mesh closed successfully")
+            except Exception as e:
+                logger.warning(f"Failed to close face mesh: {e}")
+        
+        # GPUメモリ解放
+        if device == "cuda":
+            if clip_model is not None:
+                try:
+                    clip_model.cpu()
+                    del clip_model
+                    torch.cuda.empty_cache()  # Explicitly free GPU memory
+                    logger.debug("CLIP model cleaned up successfully")
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup CLIP model: {e}")
+            
+            if speaker_model is not None:
+                try:
+                    del speaker_model
+                    logger.debug("Speaker model cleaned up successfully")
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup speaker model: {e}")
+            
+            # GPUキャッシュをクリア
+            torch.cuda.empty_cache()
+        
+        # その他のモデルを削除
+        if whisper_model is not None:
+            del whisper_model
+        if clip_processor is not None:
+            del clip_processor
+        
+        # ガベージコレクション強制実行
+        import gc
+        gc.collect()
+
+def extract_features_worker_with_lock(video_path: str, output_dir: str, gpu_lock=None):
+    """
+    並列処理用ワーカー（GPU/CPU同時実行版）
+
+    - Whisper large-v3: CPUスレッドでバックグラウンド実行
+    - Demucs → CLIP → BERT: GPUメインスレッドで順次実行
+    - 両方終わったらマージして保存
+    """
+    import sys
+    import threading
+    import tempfile
+    project_root = Path(__file__).parent.parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
+    clip_model = None
+    clip_processor = None
+    speaker_model = None
+    face_mesh = None
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    try:
+        video_name = Path(video_path).name
+        print(f"\n[START] {video_name}")
+
+        # ---- 音声をWAVに変換（共通前処理） ----
+        temp_wav = tempfile.mktemp(suffix=".wav")
+        audio_seg = AudioSegment.from_file(video_path)
+        audio_seg = audio_seg.set_frame_rate(16000).set_channels(1)
+        audio_seg.export(temp_wav, format="wav")
+
+        # ---- CPUスレッド: Demucs音声分離 + Whisper large-v3 ----
+        whisper_result = {}
+        whisper_error = {}
+
+        def run_whisper():
+            try:
+                # Demucs（GPU）→解放→Whisper（CPU）
+                audio_path_for_whisper = temp_wav
+                if gpu_lock is not None:
+                    with gpu_lock:
+                        try:
+                            from src.data_preparation.audio_separator import AudioSeparator
+                            print(f"  [Demucs] {video_name} separating...")
+                            sep = AudioSeparator(device=device)
+                            separated_path, metrics = sep.separate(temp_wav)
+                            audio_path_for_whisper = separated_path
+                            if sep.backend is not None and hasattr(sep.backend, 'model'):
+                                sep.backend.model.cpu()
+                                del sep.backend.model
+                            del sep
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                            print(f"  [Demucs] {video_name} done SDR={metrics.get('sdr',0):.1f}dB")
+                        except Exception as e:
+                            print(f"  [Demucs] WARNING: {e}, using original audio")
+
+                from src.data_preparation.whisper_enhanced import EnhancedWhisperTranscriber
+                print(f"  [Whisper] {video_name} transcribing on CPU...")
+                transcriber = EnhancedWhisperTranscriber(
+                    model_size=ENHANCED_WHISPER_MODEL,
+                    language=WHISPER_LANGUAGE if WHISPER_LANGUAGE != "null" else None,
+                    enable_preprocessing=WHISPER_ENABLE_PREPROCESSING,
+                    enable_vad=WHISPER_ENABLE_VAD,
+                    device="cpu"
+                )
+                if WHISPER_ENABLE_VAD:
+                    result = transcriber.transcribe_with_vad(audio_path_for_whisper, word_timestamps=True)
+                else:
+                    result = transcriber.transcribe(audio_path_for_whisper, word_timestamps=True)
+                whisper_result['data'] = result
+                print(f"  [Whisper] {video_name} done")
+                if hasattr(transcriber, 'model') and transcriber.model is not None:
+                    del transcriber.model
+                del transcriber
+            except Exception as e:
+                import traceback
+                whisper_error['msg'] = str(e)
+                whisper_error['tb'] = traceback.format_exc()
+                whisper_result['data'] = {'segments': [], 'language': 'unknown'}
+
+        whisper_thread = threading.Thread(target=run_whisper, daemon=True)
+        whisper_thread.start()
+
+        # ---- GPUメインスレッド: CLIP + Speaker + FaceMesh ----
+        # CLIPロード
+        try:
+            clip_model = CLIPModel.from_pretrained(CLIP_MODEL_NAME, use_safetensors=True)
+            clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
+        except (OSError, ValueError):
+            clip_model = CLIPModel.from_pretrained(CLIP_MODEL_NAME)
+            clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
+
+        # Speaker Embeddingロード
+        if ENABLE_SPEAKER_ID and PYANNOTE_AVAILABLE:
+            try:
+                os.environ['SPEECHBRAIN_CACHE_STRATEGY'] = 'copy'
+                speaker_model = PretrainedSpeakerEmbedding(
+                    SPEAKER_EMBEDDING_MODEL,
+                    device=torch.device(device)
+                )
+            except Exception as e:
+                print(f"  WARNING: Speaker model failed: {e}")
+                speaker_model = None
+
+        # FaceMeshロード
+        try:
+            mp_face_mesh = mp.solutions.face_mesh
+            face_mesh = mp_face_mesh.FaceMesh(
+                static_image_mode=False, max_num_faces=1,
+                refine_landmarks=True, min_detection_confidence=0.5
+            )
+        except Exception:
+            face_mesh = None
+
+        # 視覚特徴量（CLIPはGPUロック内）
+        if gpu_lock is not None:
+            with gpu_lock:
+                if device == "cuda":
+                    clip_model = clip_model.to("cuda")
+                print(f"  [CLIP] {video_name} extracting visual features...")
+                df_visual = _extract_visual_features(video_path, clip_model, clip_processor, face_mesh, device)
+                print(f"  [CLIP] {video_name} done")
+        else:
+            if device == "cuda":
+                clip_model = clip_model.to("cuda")
+            df_visual = _extract_visual_features(video_path, clip_model, clip_processor, face_mesh, device)
+
+        # ---- Whisperスレッド完了を待つ ----
+        print(f"  [WAIT] {video_name} waiting for Whisper...")
+        whisper_thread.join()
+
+        if whisper_error:
+            print(f"  WARNING: Whisper error: {whisper_error.get('msg')}")
+
+        whisper_results = whisper_result.get('data', {'segments': [], 'language': 'unknown'})
+
+        # ---- 音声特徴量（CPU処理、Whisper結果を使用） ----
+        y, sr = librosa.load(temp_wav, sr=16000)
+        total_duration = librosa.get_duration(y=y, sr=sr)
+        frame_length = int(TIME_STEP * sr)
+        hop_length = frame_length
+
+        rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+        vad_threshold = 0.01
+        is_speaking = (rms > vad_threshold).astype(int)
+
+        silence_duration_ms = []
+        current_silence = 0
+        for speak_flag in is_speaking:
+            if speak_flag == 0:
+                current_silence += int(TIME_STEP * 1000)
+            else:
+                current_silence = 0
+            silence_duration_ms.append(current_silence)
+
+        emotion_features = _extract_emotion_features(y, sr, frame_length, hop_length) if ENABLE_EMOTION_FEATURES else None
+        df_text = _align_text_features(whisper_results, total_duration)
+        df_telop = _extract_telop_features(video_path, total_duration, 'data/raw/editxml')
+        df_speaker = _extract_speaker_features(temp_wav, y, sr, total_duration, is_speaking, speaker_model)
+
+        # Excitement features（BERT GPU）
+        if gpu_lock is not None:
+            with gpu_lock:
+                df_excitement = _extract_excitement_features(whisper_results, total_duration)
+        else:
+            df_excitement = _extract_excitement_features(whisper_results, total_duration)
+
+        # 音声DataFrame統合
+        min_len = min(len(rms), len(df_text), len(df_telop), len(df_speaker), len(df_excitement))
+        if emotion_features is not None:
+            min_len = min(min_len, len(emotion_features['pitch']))
+
+        df_audio = pd.DataFrame({
+            'time': df_text['time'][:min_len],
+            'audio_energy_rms': rms[:min_len],
+            'audio_is_speaking': is_speaking[:min_len],
+            'silence_duration_ms': silence_duration_ms[:min_len],
+            'speaker_id': df_speaker['speaker_id'][:min_len],
+            'text_is_active': df_text['text_is_active'][:min_len],
+            'text_word': df_text['text_word'][:min_len],
+            'telop_active': df_telop['telop_active'][:min_len],
+            'telop_text': df_telop['telop_text'][:min_len]
+        })
+        if emotion_features is not None:
+            df_audio['pitch_f0'] = emotion_features['pitch'][:min_len]
+            df_audio['pitch_std'] = emotion_features['pitch_std'][:min_len]
+            df_audio['spectral_centroid'] = emotion_features['spectral_centroid'][:min_len]
+            df_audio['zcr'] = emotion_features['zcr'][:min_len]
+            for i in range(MFCC_DIM):
+                df_audio[f'mfcc_{i}'] = emotion_features['mfcc'][i][:min_len]
+        for i in range(SPEAKER_EMBEDDING_DIM):
+            df_audio[f'speaker_emb_{i}'] = df_speaker[f'speaker_emb_{i}'][:min_len]
+        df_excitement_features = df_excitement.drop(columns=['time'])
+        for col in df_excitement_features.columns:
+            df_audio[col] = df_excitement_features[col][:min_len]
+
+        # ---- 音声 + 視覚をマージして保存 ----
+        min_len2 = min(len(df_audio), len(df_visual))
+        df_audio = df_audio.iloc[:min_len2].reset_index(drop=True)
+        df_visual = df_visual.iloc[:min_len2].reset_index(drop=True)
+        df_visual = df_visual.drop(columns=['time'])
+        df_final = pd.concat([df_audio, df_visual], axis=1)
+
+        video_stem = Path(video_path).stem
+        output_path = os.path.join(output_dir, f"{video_stem}_features.csv")
+        df_final.to_csv(output_path, index=False, float_format='%.6f')
+
+        print(f"[DONE] {video_name}: {len(df_final)}steps, {len(df_final.columns)}features")
+        return {
+            "file": video_name,
+            "status": "Success",
+            "timesteps": len(df_final),
+            "features": len(df_final.columns)
         }
 
+    except Exception as e:
+        import traceback
+        return {
+            "file": Path(video_path).name,
+            "status": "Error",
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+    finally:
+        if 'temp_wav' in locals() and os.path.exists(temp_wav):
+            os.remove(temp_wav)
+        if face_mesh is not None:
+            try:
+                face_mesh.close()
+            except Exception:
+                pass
+        if device == "cuda":
+            if clip_model is not None:
+                try:
+                    clip_model.cpu()
+                    del clip_model
+                except Exception:
+                    pass
+            if speaker_model is not None:
+                try:
+                    del speaker_model
+                except Exception:
+                    pass
+            torch.cuda.empty_cache()
+        import gc
+        gc.collect()
+
+
 def _extract_audio_features(
-    video_path: str, 
-    whisper_model, 
+    video_path: str,
+    whisper_model,
     speaker_model=None,
-    xml_dir: str = 'editxml'
+    xml_dir: str = 'editxml',
+    gpu_lock=None
 ) -> pd.DataFrame:
     """音声特徴量を抽出（テロップ情報と話者識別を含む）"""
-    temp_wav = "temp_audio.wav"
+    import tempfile
+    temp_wav = tempfile.mktemp(suffix=".wav")
     
     try:
         # 音声を抽出
@@ -255,8 +588,11 @@ def _extract_audio_features(
             temp_wav, y, sr, total_duration, is_speaking, speaker_model
         )
         
+        # 盛り上がり度特徴量を抽出（Whisper結果を使用）
+        df_excitement = _extract_excitement_features(whisper_results, total_duration)
+        
         # DataFrame統合
-        min_len = min(len(rms), len(df_text), len(df_telop), len(df_speaker))
+        min_len = min(len(rms), len(df_text), len(df_telop), len(df_speaker), len(df_excitement))
         if emotion_features is not None:
             min_len = min(min_len, len(emotion_features['pitch']))
         
@@ -287,6 +623,12 @@ def _extract_audio_features(
         # 話者埋め込みを追加（192次元）
         for i in range(SPEAKER_EMBEDDING_DIM):
             df_audio[f'speaker_emb_{i}'] = df_speaker[f'speaker_emb_{i}'][:min_len]
+        
+        # 盛り上がり度特徴量を追加（789次元）
+        # timeカラムを除外してマージ
+        df_excitement_features = df_excitement.drop(columns=['time'])
+        for col in df_excitement_features.columns:
+            df_audio[col] = df_excitement_features[col][:min_len]
         
         return df_audio
         
@@ -387,43 +729,171 @@ def _extract_emotion_features(y: np.ndarray, sr: int, frame_length: int, hop_len
         }
 
 
-def _get_whisper_features(audio_path: str, whisper_model) -> List[Dict]:
-    """Whisperで文字起こし"""
+def _get_whisper_features(audio_path: str, whisper_model) -> Dict:
+    """Whisperで文字起こし（GPU最適化版: Demucs→解放→Whisper GPU→解放）"""
     try:
-        result = whisper_model.transcribe(audio_path, word_timestamps=True)
-        word_list = []
-        for segment in result.get('segments', []):
-            for word_info in segment.get('words', []):
-                word_list.append({
-                    "word": word_info['word'],
-                    "start": word_info['start'],
-                    "end": word_info['end']
-                })
-        return word_list
-    except:
-        return []
+        audio_path_for_whisper = audio_path
+        separation_metrics = None
 
-def _align_text_features(whisper_results: List[Dict], total_duration: float) -> pd.DataFrame:
-    """Whisper結果を時系列データに変換"""
+        # ---- Step 1: Demucs音声分離（GPU使用後に解放） ----
+        # config.yamlのenabledを読み込む（環境変数で上書き可能）
+        try:
+            import yaml
+            with open("configs/config_audio_separation.yaml", "r", encoding="utf-8") as f:
+                _sep_config = yaml.safe_load(f)
+            _sep_enabled_default = str(_sep_config.get("enabled", False)).lower()
+        except Exception:
+            _sep_enabled_default = "false"
+
+        enable_audio_separation = os.getenv("ENABLE_AUDIO_SEPARATION", _sep_enabled_default).lower() == "true"
+
+        if enable_audio_separation:
+            try:
+                from src.data_preparation.audio_separator import AudioSeparator
+
+                print(f"  [Demucs] Separating vocals (GPU)...")
+                separator = AudioSeparator(device="cuda" if torch.cuda.is_available() else "cpu")
+                separated_audio_path, separation_metrics = separator.separate(audio_path)
+
+                if separation_metrics.get('cache_hit'):
+                    print(f"    Using cached separated audio")
+                else:
+                    print(f"    Separation complete: SDR={separation_metrics.get('sdr', 0):.2f}dB, "
+                          f"time={separation_metrics.get('processing_time', 0):.1f}s")
+
+                audio_path_for_whisper = separated_audio_path
+
+                # Demucsモデルをメモリから解放
+                if separator.backend is not None and hasattr(separator.backend, 'model'):
+                    separator.backend.model.cpu()
+                    del separator.backend.model
+                del separator
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                print(f"    [Demucs] GPU memory released")
+
+            except Exception as e:
+                print(f"  WARNING: Audio separation failed: {e}")
+                print(f"  Falling back to original audio")
+                audio_path_for_whisper = audio_path
+
+        # ---- Step 2: Whisper文字起こし（CPU固定、他モデルのGPUメモリを圧迫しない） ----
+        if USE_ENHANCED_WHISPER:
+            from src.data_preparation.whisper_enhanced import EnhancedWhisperTranscriber
+
+            print(f"  [Whisper] Transcribing on CPU (model={ENHANCED_WHISPER_MODEL})...")
+            try:
+                enhanced_transcriber = EnhancedWhisperTranscriber(
+                    model_size=ENHANCED_WHISPER_MODEL,
+                    language=WHISPER_LANGUAGE if WHISPER_LANGUAGE != "null" else None,
+                    enable_preprocessing=WHISPER_ENABLE_PREPROCESSING,
+                    enable_vad=WHISPER_ENABLE_VAD,
+                    device="cpu"  # GPU競合を避けるためCPU固定
+                )
+                if WHISPER_ENABLE_VAD:
+                    result = enhanced_transcriber.transcribe_with_vad(audio_path_for_whisper, word_timestamps=True)
+                else:
+                    result = enhanced_transcriber.transcribe(audio_path_for_whisper, word_timestamps=True)
+                print(f"  [Whisper] Done on CPU")
+            finally:
+                if 'enhanced_transcriber' in locals():
+                    if hasattr(enhanced_transcriber, 'model') and enhanced_transcriber.model is not None:
+                        del enhanced_transcriber.model
+                    del enhanced_transcriber
+                    print(f"    [Whisper] memory released")
+
+        else:
+            # 標準Whisper（既にロード済みのモデルを使用）
+            result = whisper_model.transcribe(audio_path_for_whisper, word_timestamps=True)
+
+        if separation_metrics is not None:
+            result['audio_separation'] = separation_metrics
+
+        return result
+
+    except Exception as e:
+        print(f"  WARNING: Failed to transcribe audio: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return {'segments': [], 'language': 'unknown'}
+
+def _align_text_features(whisper_results: Dict, total_duration: float) -> pd.DataFrame:
+    """Whisper結果を時系列データに変換（内容分析を含む）"""
+    from src.data_preparation.text_analysis import TextAnalyzer
+    
     num_steps = int(math.ceil(total_duration / TIME_STEP))
     time_points = [round(i * TIME_STEP, 6) for i in range(num_steps + 1)]
     
+    # テキスト分析器を初期化
+    analyzer = TextAnalyzer()
+    
+    # 言語を検出
+    detected_language = whisper_results.get('language', 'unknown')
+    logger.info(f"  Detected language: {detected_language}")
+    
+    # セグメントごとに分析
+    analyzed_segments = []
+    for segment in whisper_results.get('segments', []):
+        text = segment.get('text', '')
+        start = segment.get('start', 0.0)
+        end = segment.get('end', 0.0)
+        duration = end - start
+        
+        # セグメントを分析
+        analysis = analyzer.analyze_segment(text, duration)
+        analysis['start'] = start
+        analysis['end'] = end
+        analysis['text'] = text
+        
+        analyzed_segments.append(analysis)
+    
+    # 時系列データに変換
     text_records = []
     for t in time_points:
-        current_word = np.nan
-        is_active = 0
+        # デフォルト値
+        record = {
+            'time': t,
+            'text_is_active': 0,
+            'text_word': np.nan,
+            'text_language': detected_language,
+            'text_char_count': 0,
+            'text_word_count': 0,
+            'text_speech_rate': 0.0,
+            'text_emotion_positive': 0.0,
+            'text_emotion_negative': 0.0,
+            'text_emotion_excited': 0.0,
+            'text_emotion_question': 0.0,
+            'text_emotion_neutral': 1.0,
+            'text_topic_game': 0.0,
+            'text_topic_tech': 0.0,
+            'text_topic_entertainment': 0.0,
+            'text_topic_daily': 0.0,
+            'text_topic_tutorial': 0.0,
+            'text_keywords': ''
+        }
         
-        for w in whisper_results:
-            if w['start'] <= t < w['end']:
-                current_word = w['word'].strip()
-                is_active = 1
+        # 現在の時刻に対応するセグメントを探す
+        for seg in analyzed_segments:
+            if seg['start'] <= t < seg['end']:
+                record['text_is_active'] = 1
+                record['text_word'] = seg['text']
+                record['text_char_count'] = seg['char_count']
+                record['text_word_count'] = seg['word_count']
+                record['text_speech_rate'] = seg['speech_rate']
+                record['text_emotion_positive'] = seg['emotion_positive']
+                record['text_emotion_negative'] = seg['emotion_negative']
+                record['text_emotion_excited'] = seg['emotion_excited']
+                record['text_emotion_question'] = seg['emotion_question']
+                record['text_emotion_neutral'] = seg['emotion_neutral']
+                record['text_topic_game'] = seg['topic_game']
+                record['text_topic_tech'] = seg['topic_tech']
+                record['text_topic_entertainment'] = seg['topic_entertainment']
+                record['text_topic_daily'] = seg['topic_daily']
+                record['text_topic_tutorial'] = seg['topic_tutorial']
+                record['text_keywords'] = seg['keywords']
                 break
         
-        text_records.append({
-            'time': t,
-            'text_is_active': is_active,
-            'text_word': current_word
-        })
+        text_records.append(record)
     
     return pd.DataFrame(text_records)
 
@@ -722,6 +1192,80 @@ def _extract_telop_features(video_path: str, total_duration: float, xml_dir: str
             'telop_text': np.nan
         })
 
+
+def _extract_excitement_features(whisper_results: Dict, total_duration: float) -> pd.DataFrame:
+    """
+    盛り上がり度特徴量を抽出
+    
+    Args:
+        whisper_results: Whisper文字起こし結果
+        total_duration: 動画の総時間（秒）
+    
+    Returns:
+        盛り上がり度特徴量DataFrame（789次元 + time）
+    """
+    try:
+        from src.data_preparation.excitement_detector import ExcitementDetector
+        
+        # Whisperセグメントを抽出
+        segments = []
+        for seg in whisper_results.get('segments', []):
+            segments.append({
+                'start': seg.get('start', 0.0),
+                'end': seg.get('end', 0.0),
+                'text': seg.get('text', '')
+            })
+        
+        # ExcitementDetectorを初期化
+        config = {
+            'sampling_rate': TIME_STEP,
+            'use_gpu': torch.cuda.is_available()
+        }
+        
+        detector = ExcitementDetector(config=config)
+        
+        # 特徴量を生成
+        df_excitement = detector.generate_features(
+            transcription_segments=segments,
+            video_duration=total_duration,
+            sampling_rate=TIME_STEP
+        )
+        
+        print(f"  OK: Excitement features extracted: {df_excitement.shape}")
+        
+        return df_excitement
+        
+    except Exception as e:
+        print(f"  WARNING: Failed to extract excitement features: {e}")
+        print(f"     Falling back to zero-filled features")
+        
+        # エラー時はゼロで埋めた特徴量を返す
+        num_steps = int(np.ceil(total_duration / TIME_STEP)) + 1
+        time_points = [round(i * TIME_STEP, 6) for i in range(num_steps)]
+        
+        # 789次元のゼロ特徴量
+        zero_features = np.zeros((num_steps, 789))
+        
+        # カラム名を定義
+        columns = ['time']
+        columns.extend([f'speech_embedding_{i}' for i in range(768)])
+        columns.extend([
+            'speech_presence', 'cumulative_speech_count', 'time_since_last_speech',
+            'speech_text_length', 'speech_density_10s', 'simultaneous_speech_count',
+            'positive_emotion_intensity', 'excited_emotion_intensity', 'emotion_change_rate',
+            'laughter_density', 'emotion_variance_10s',
+            'topic_change_rate', 'climax_keyword_density', 'semantic_similarity',
+            'topic_shift_intensity', 'climax_score',
+            'speech_burst_intensity', 'speech_pause_frequency', 'speech_rhythm_variance',
+            'speech_acceleration', 'burst_pattern_score'
+        ])
+        
+        df = pd.DataFrame(zero_features, columns=columns[1:])
+        df.insert(0, 'time', time_points)
+        
+        return df
+
+
 def _extract_visual_features(video_path: str, clip_model, clip_processor, face_mesh, device) -> pd.DataFrame:
     """視覚特徴量を抽出（メモリ効率化版）"""
     cap = cv2.VideoCapture(video_path)
@@ -833,9 +1377,11 @@ def _extract_visual_features(video_path: str, clip_model, clip_processor, face_m
     
     # 一時ファイルを削除
     try:
-        os.remove(temp_csv_path)
-    except:
-        pass
+        if os.path.exists(temp_csv_path):
+            os.remove(temp_csv_path)
+            logger.debug(f"Removed temporary file: {temp_csv_path}")
+    except OSError as e:
+        logger.warning(f"Failed to remove temporary file {temp_csv_path}: {e}")
     
     return df_final
 

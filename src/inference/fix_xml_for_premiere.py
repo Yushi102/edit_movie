@@ -240,9 +240,6 @@ def fix_xml_for_premiere(input_xml: str, output_xml: str, verbose: bool = True):
         
         print(f"  ✓ Converted {telop_counter} telops to graphics")
     
-    # 9. インデントを整形（タブを使用）
-    # 既にインデントされているので、この処理はスキップ
-    
     # 保存
     output_path = Path(output_xml)
     output_path.parent.mkdir(parents=True, exist_ok=True)

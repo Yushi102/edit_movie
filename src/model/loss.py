@@ -26,8 +26,8 @@ class MultiTrackLoss(nn.Module):
         asset_weight: float = 1.0,
         scale_weight: float = 1.0,
         position_weight: float = 1.0,
-        rotation_weight: float = 1.0,
-        crop_weight: float = 1.0,
+        rotation_weight: float = 0.1,
+        crop_weight: float = 0.1,
         ignore_inactive: bool = True,
         label_smoothing: float = 0.0
     ):
@@ -142,8 +142,10 @@ class MultiTrackLoss(nn.Module):
         # This ensures stable gradients regardless of per-frame active track count
         active_count = active_mask.sum()
         
-        # Avoid division by zero (use max to ensure at least 1.0)
-        active_count = torch.clamp(active_count, min=1.0)
+        # Avoid division by zero with safer normalization
+        # Use max(1.0, batch_size) to prevent single-frame dominance
+        batch_size = predictions['active'].size(0)
+        active_count = torch.clamp(active_count, min=max(1.0, float(batch_size)))
         
         # Scale loss
         scale_pred = predictions['scale'].squeeze(-1)  # (batch, seq_len, num_tracks)
@@ -185,7 +187,8 @@ class MultiTrackLoss(nn.Module):
             crop_loss = self.mse_loss(crop_pred, crop_target)
             crop_losses.append(crop_loss)
         
-        crop_loss = (sum(crop_losses) * active_mask).sum() / active_count
+        # Sum crop losses using torch.stack (fixes potential sum() issue with tensors)
+        crop_loss = (torch.sum(torch.stack(crop_losses), dim=0) * active_mask).sum() / active_count
         
         # === Total Loss ===
         total_loss = (
@@ -210,34 +213,46 @@ class MultiTrackLoss(nn.Module):
 
 
 class GradientClipper:
-    """Utility for gradient clipping"""
+    """Utility for gradient clipping with configurable parameters"""
     
-    def __init__(self, max_norm: float = 1.0, norm_type: float = 2.0):
+    def __init__(self, max_norm: float = 2.0, norm_type: float = 2.0, warn_threshold: float = 100.0):
         """
         Initialize gradient clipper
         
         Args:
-            max_norm: Maximum norm for gradient clipping
-            norm_type: Type of norm (2.0 for L2 norm)
+            max_norm: Maximum norm for gradient clipping (default: 2.0)
+                     Common values: 1.0 (conservative), 2.0-5.0 (moderate), 10.0+ (permissive)
+            norm_type: Type of norm (default: 2.0 for L2 norm)
+            warn_threshold: Threshold for gradient explosion warning (default: 100.0)
         """
         self.max_norm = max_norm
         self.norm_type = norm_type
+        self.warn_threshold = warn_threshold
+        
+        logger.info(f"GradientClipper initialized: max_norm={max_norm}, norm_type={norm_type}")
     
-    def clip(self, model: nn.Module) -> float:
+    def clip(self, model: nn.Module, warn: bool = True) -> float:
         """
         Clip gradients of model parameters
         
         Args:
             model: PyTorch model
+            warn: Whether to log warning for large gradients (default: True)
         
         Returns:
             Total norm of gradients before clipping
         """
-        return torch.nn.utils.clip_grad_norm_(
+        total_norm = torch.nn.utils.clip_grad_norm_(
             model.parameters(),
             self.max_norm,
             norm_type=self.norm_type
         )
+        
+        # Warn about gradient explosion
+        if warn and total_norm > self.warn_threshold:
+            logger.warning(f"⚠️  Large gradient norm detected: {total_norm:.2f} (threshold: {self.warn_threshold})")
+        
+        return total_norm
 
 
 def create_optimizer(
@@ -451,26 +466,32 @@ if __name__ == "__main__":
     num_tracks = 20
     num_asset_classes = 10
     
-    # Create dummy predictions (with requires_grad for gradient test)
+    # Create dummy predictions (with requires_grad for gradient test) - all 12 parameters
     predictions = {
         'active': torch.randn(batch_size, seq_len, num_tracks, 2, requires_grad=True),
         'asset': torch.randn(batch_size, seq_len, num_tracks, num_asset_classes, requires_grad=True),
         'scale': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
         'pos_x': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
         'pos_y': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
+        'anchor_x': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
+        'anchor_y': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
+        'rotation': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
         'crop_l': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
         'crop_r': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
         'crop_t': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True),
         'crop_b': torch.randn(batch_size, seq_len, num_tracks, 1, requires_grad=True)
     }
     
-    # Create dummy targets
+    # Create dummy targets (all 12 parameters)
     targets = {
         'active': torch.randint(0, 2, (batch_size, seq_len, num_tracks)),
         'asset': torch.randint(0, num_asset_classes, (batch_size, seq_len, num_tracks)),
         'scale': torch.randn(batch_size, seq_len, num_tracks, 1),
         'pos_x': torch.randn(batch_size, seq_len, num_tracks, 1),
         'pos_y': torch.randn(batch_size, seq_len, num_tracks, 1),
+        'anchor_x': torch.randn(batch_size, seq_len, num_tracks, 1),
+        'anchor_y': torch.randn(batch_size, seq_len, num_tracks, 1),
+        'rotation': torch.randn(batch_size, seq_len, num_tracks, 1),
         'crop_l': torch.randn(batch_size, seq_len, num_tracks, 1),
         'crop_r': torch.randn(batch_size, seq_len, num_tracks, 1),
         'crop_t': torch.randn(batch_size, seq_len, num_tracks, 1),
@@ -515,7 +536,7 @@ if __name__ == "__main__":
     
     # Test prepare_targets_from_input
     logger.info("\nTesting prepare_targets_from_input...")
-    input_seq = torch.randn(batch_size, seq_len, 180)  # 20 tracks * 9 params
+    input_seq = torch.randn(batch_size, seq_len, 240)  # 20 tracks * 12 params
     targets_from_input = prepare_targets_from_input(input_seq, num_tracks=20)
     
     logger.info("Target shapes:")

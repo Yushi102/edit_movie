@@ -283,7 +283,7 @@ if __name__ == "__main__":
     clean_signal = np.sin(t)
     noisy_signal = clean_signal + np.random.normal(0, 0.2, len(t))
     
-    print("Testing smoothing methods...")
+    logger.info("Testing smoothing methods...")
     
     # 各手法でテスト
     methods = ['moving_average', 'savgol', 'ema']
@@ -294,13 +294,13 @@ if __name__ == "__main__":
         
         # RMSEを計算
         rmse = np.sqrt(np.mean((smoothed - clean_signal) ** 2))
-        print(f"\n{method}:")
-        print(f"  RMSE: {rmse:.4f}")
-        print(f"  Original std: {noisy_signal.std():.4f}")
-        print(f"  Smoothed std: {smoothed.std():.4f}")
+        logger.info(f"\n{method}:")
+        logger.info(f"  RMSE: {rmse:.4f}")
+        logger.info(f"  Original std: {noisy_signal.std():.4f}")
+        logger.info(f"  Smoothed std: {smoothed.std():.4f}")
     
     # トラックデータのテスト
-    print("\n\nTesting track smoothing...")
+    logger.info("\n\nTesting track smoothing...")
     
     tracks_data = [
         {
@@ -316,7 +316,7 @@ if __name__ == "__main__":
     smoother = PredictionSmoother(method='savgol', window_size=7)
     smoothed_tracks = smoother.smooth_track_predictions(tracks_data)
     
-    print(f"Original scale std: {tracks_data[0]['scale'].std():.4f}")
-    print(f"Smoothed scale std: {smoothed_tracks[0]['scale'].std():.4f}")
+    logger.info(f"Original scale std: {tracks_data[0]['scale'].std():.4f}")
+    logger.info(f"Smoothed scale std: {smoothed_tracks[0]['scale'].std():.4f}")
     
-    print("\n✅ All tests passed!")
+    logger.info("\n✅ All tests passed!")

@@ -85,7 +85,10 @@ def parse_xml_ground_truth(xml_path, fps_base=59.94):
                         try:
                             v_float = float(val)
                             if "scale" in pid: attrs["scale"] = v_float
-                        except: pass
+                        except (ValueError, TypeError) as e:
+                            logger.debug(f"Failed to convert value '{val}' to float for parameter '{pid}': {e}")
+                            if "scale" in pid:
+                                attrs["scale"] = 1.0  # Default scale
                 timeline_events.append(attrs)
 
     return timeline_events, video_path
@@ -165,8 +168,10 @@ class FeatureExtractor:
                 kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
                 labels = kmeans.fit_predict(mfcc_scaled)
                 speaker_ids[valid_indices] = labels + 1 # ID: 1, 2... (0は無音)
-            except:
-                pass # エラー時は全員ID:0
+                logger.debug(f"Speaker diarization successful: {len(set(labels))} speakers detected")
+            except Exception as e:
+                logger.warning(f"Speaker diarization failed: {e}. All speakers assigned ID 0")
+                # エラー時は全員ID:0（デフォルト値）
 
         return rms, is_speaking, np.array(silence_durations), speaker_ids
 
@@ -237,7 +242,10 @@ class FeatureExtractor:
                     results = self.reader.readtext(frame, detail=0) 
                     last_ocr_text_active = 1 if results else 0
                     last_ocr_word_count = len(results) # 単語数/行数
-                except:
+                except Exception as e:
+                    logger.debug(f"OCR processing failed: {e}")
+                    last_ocr_text_active = 0
+                    last_ocr_word_count = 0
                     pass
             
             # --- 4. Face ---

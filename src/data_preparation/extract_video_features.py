@@ -85,7 +85,8 @@ class FeatureExtractor:
         try:
             self.clip_model = CLIPModel.from_pretrained(CLIP_MODEL_NAME, use_safetensors=True)
             self.clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
-        except:
+        except (OSError, ValueError) as e:
+            logger.warning(f"Failed to load CLIP model with safetensors, falling back to standard loading: {e}")
             self.clip_model = CLIPModel.from_pretrained(CLIP_MODEL_NAME)
             self.clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
         

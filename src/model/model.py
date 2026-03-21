@@ -92,7 +92,8 @@ class MultiTrackTransformer(nn.Module):
         dim_feedforward: int = 1024,
         dropout: float = 0.1,
         num_tracks: int = 20,
-        max_asset_classes: int = 10
+        max_asset_classes: int = 10,
+        max_sequence_length: int = 20000  # Maximum sequence length for positional encoding
     ):
         super().__init__()
         
@@ -105,7 +106,7 @@ class MultiTrackTransformer(nn.Module):
         self.input_projection = nn.Linear(input_features, d_model)
         
         # Positional encoding
-        self.pos_encoder = PositionalEncoding(d_model, dropout=dropout)
+        self.pos_encoder = PositionalEncoding(d_model, max_len=max_sequence_length, dropout=dropout)
         
         # Track embedding
         self.track_embedding = TrackEmbedding(num_tracks, d_model)
@@ -254,7 +255,8 @@ def create_model(
     enable_multimodal: bool = False,
     audio_features: int = 17,
     visual_features: int = 522,
-    fusion_type: str = 'gated'
+    fusion_type: str = 'gated',
+    max_sequence_length: int = 20000
 ):
     """
     Create a Multi-Track Transformer model (unimodal or multimodal)
@@ -272,6 +274,7 @@ def create_model(
         audio_features: Number of audio features (for multimodal)
         visual_features: Number of visual features (for multimodal)
         fusion_type: Fusion strategy ('gated', 'concat', 'add')
+        max_sequence_length: Maximum sequence length for positional encoding
     
     Returns:
         MultiTrackTransformer or MultimodalTransformer model
@@ -288,7 +291,8 @@ def create_model(
             dropout=dropout,
             num_tracks=num_tracks,
             max_asset_classes=max_asset_classes,
-            fusion_type=fusion_type
+            fusion_type=fusion_type,
+            max_sequence_length=max_sequence_length
         )
     else:
         model = MultiTrackTransformer(
@@ -299,7 +303,8 @@ def create_model(
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             num_tracks=num_tracks,
-            max_asset_classes=max_asset_classes
+            max_asset_classes=max_asset_classes,
+            max_sequence_length=max_sequence_length
         )
     
     num_params = model.count_parameters()
@@ -347,13 +352,16 @@ if __name__ == "__main__":
     for key, value in outputs.items():
         logger.info(f"  {key}: {value.shape}")
     
-    # Verify output shapes
+    # Verify output shapes (all 12 parameters)
     expected_shapes = {
         'active': (batch_size, seq_len, 20, 2),
         'asset': (batch_size, seq_len, 20, 10),
         'scale': (batch_size, seq_len, 20, 1),
         'pos_x': (batch_size, seq_len, 20, 1),
         'pos_y': (batch_size, seq_len, 20, 1),
+        'anchor_x': (batch_size, seq_len, 20, 1),
+        'anchor_y': (batch_size, seq_len, 20, 1),
+        'rotation': (batch_size, seq_len, 20, 1),
         'crop_l': (batch_size, seq_len, 20, 1),
         'crop_r': (batch_size, seq_len, 20, 1),
         'crop_t': (batch_size, seq_len, 20, 1),
@@ -413,7 +421,8 @@ class MultimodalTransformer(nn.Module):
         num_tracks: int = 20,
         max_asset_classes: int = 10,
         enable_multimodal: bool = True,
-        fusion_type: str = 'gated'
+        fusion_type: str = 'gated',
+        max_sequence_length: int = 20000  # Maximum sequence length for positional encoding
     ):
         """
         Initialize MultimodalTransformer
@@ -431,6 +440,7 @@ class MultimodalTransformer(nn.Module):
             max_asset_classes: Maximum number of asset classes
             enable_multimodal: Whether to use multimodal features (fallback to track-only if False)
             fusion_type: Fusion strategy ('concat', 'add', 'gated')
+            max_sequence_length: Maximum sequence length for positional encoding
         """
         super().__init__()
         
@@ -463,7 +473,7 @@ class MultimodalTransformer(nn.Module):
             )
         
         # Positional encoding
-        self.pos_encoder = PositionalEncoding(d_model, dropout=dropout)
+        self.pos_encoder = PositionalEncoding(d_model, max_len=max_sequence_length, dropout=dropout)
         
         # Track embedding for track-specific predictions
         self.track_embedding = TrackEmbedding(num_tracks, d_model)

@@ -119,35 +119,46 @@ python scripts/create_cut_selection_data_enhanced_fullvideo.py
 
 ## 🎓 カット選択モデルを学習する
 
-### Full Video学習（推奨）✅
+### Auto Training Loop（推奨）✅
+
+目標達成まで自動でハイパーパラメータを調整しながら繰り返し学習：
 
 ```bash
-# バッチファイルで実行（推奨）
+python scripts/auto_train_loop.py --max-rounds 8 --target-recall 0.75 --min-precision 0.35
+```
+
+- recall >= 75% かつ precision >= 35% で自動停止
+- 各ラウンドのモデルを `best_model_round{N}.pth` にバックアップ
+- ロックファイルで多重起動を防止
+
+### Full Video単発学習
+
+```bash
 batch/train_fullvideo.bat
 ```
 
 **学習設定**:
 - 1動画=1サンプル（per-video最適化）
-- エポック数: 50
-- バッチサイズ: 16
+- 最大エポック数: 300
+- バッチサイズ: 1（動画ごと）
 - 学習率: 0.0001
-- Early Stopping: 15エポック
+- Early Stopping: 40エポック
 - Mixed Precision: 有効
-- Random Seed: 42（再現性確保）
+- 予測方式: 純粋なargmax（active率制約なし）
 
-**学習時間**: 約2-3時間（250エポック = 50 × 5 Folds、GPU使用時）
-
-**Early Stopping効果**:
-- 平均収束: 7.4エポック
-- 実際の学習: 37エポック（85%削減）
+**学習時間**: 約1-2時間（GPU使用時）
 
 ### 学習状況の確認
 
-ブラウザで `checkpoints_cut_selection_fullvideo/view_training.html` を開くと、2秒ごとに自動更新されるグラフで学習の様子をリアルタイム確認できます。
+ブラウザで `checkpoints_cut_selection_fullvideo_v2/view_training.html` を開くと、5秒ごとに自動更新されるグラフで学習の様子をリアルタイム確認できます。
 
-**学習グラフ**:
-1. F1スコアの推移
-2. Validation Lossの推移
+**学習グラフ（6パネル）**:
+1. 損失関数（Train/Val Loss）
+2. 損失の内訳（CE Loss / TV Loss）
+3. 分類性能（Accuracy & F1）
+4. Precision, Recall, Specificity
+5. 平均予測時間（Duration制約）
+6. Active/Inactive予測比率
 3. 現在のF1スコア（棒グラフ）
 4. 進捗状況（テキスト）
 5. 最良F1の推移（各Fold）
@@ -169,15 +180,10 @@ batch/train_fullvideo.bat
 
 ### 推論前に必要なもの
 ```
-checkpoints_cut_selection_fullvideo/
+checkpoints_cut_selection_fullvideo_v2/
 ├── best_model.pth                 # 学習済みモデル
 └── inference_params.yaml          # 推論パラメータ
 ```
-├── fold_3_best_model.pth
-├── fold_4_best_model.pth
-├── fold_5_best_model.pth
-├── inference_params.yaml          # 推論用パラメータ
-└── (その他のチェックポイント)
 
 preprocessed_data/
 ├── audio_scaler_cut_selection_enhanced.pkl
@@ -376,23 +382,16 @@ Premiere Proで開くと、自動的にカット編集されたタイムライ�
 
 ### Full Video Model（推奨）✅
 
-| 指標 | 学習時 | 推論テスト |
-|------|--------|----------|----------------|
-| **F1 Score** | **42.30%** | ±5.75% | **49.42%** |
-| **Accuracy** | 50.24% | ±14.92% | 73.63% |
-| **Precision** | 29.83% | ±5.80% | 36.94% |
-| **Recall** | **76.10%** | ±5.19% | 74.65% |
+**現在の性能**（Round 1, Epoch 41）:
 
-**推奨モデル**: Fold 1（F1: 49.42%、最も安定した性能）
+| 指標 | 値 |
+|------|-----|
+| Recall | 87.16% |
+| F1スコア | 57.35% |
+| Precision | 42.73% |
 
-### Full Video Model結果（推論性能）
-
-**モデル**: `checkpoints_cut_selection_fullvideo/best_model.pth` (Epoch 9)
-
-**学習時性能**:
-- F1: 0.5290
-- Recall: 0.8065
-- Avg Duration: 101.3秒
+**ベストモデル基準**: recall >= 75% かつ precision >= 35% の中でF1最大  
+**予測方式**: 純粋なargmax（active率制約なし）
 
 **推論テスト結果**（bandicam 2025-05-11 19-25-14-768.mp4）:
 - 動画長: 1000.1秒（約16.7分）
@@ -409,22 +408,6 @@ Premiere Proで開くと、自動的にカット編集されたタイムライ�
 
 **詳細**: [推論テスト結果レポート](INFERENCE_TEST_RESULTS.md)
 
-### 目標達成状況
-
-| 項目 | 目標 | 達成 | 状況 |
-|------|------|------|------|
-| F1スコア | 55% | 42.30% | ❌ 未達成 (-12.70pt) |
-| Recall | 71% | 76.10% | ✅ 達成 (+5.10pt) |
-
-**強み**:
-- 高いRecall（76.10%）: 採用すべきカットを見逃さない
-- 安定した再現性: Random Seed 42で固定
-
-**弱み**:
-- 低いPrecision（29.83%）: 誤検出が多い、後処理フィルタリングが必要
-- Fold間のばらつき: 最良49.42% vs 最悪32.20%（17.22pt差）
-
 ---
 
-**最終更新**: 2025-12-26  
-**バージョン**: 4.0.0（Full Video Model推奨版）
+**最終更新**: 2026-03-21

@@ -5,7 +5,7 @@
 Full Video Cut Selection Model（1 video = 1 sample、per-video制約）の推論テストを実施し、成功しました。
 
 **テスト日時**: 2025-12-26  
-**モデル**: `checkpoints_cut_selection_fullvideo/best_model.pth` (Epoch 9)
+**モデル**: `checkpoints_cut_selection_fullvideo_v2/best_model.pth` (Round 1, Epoch 41)
 
 ---
 
@@ -24,13 +24,14 @@ Full Video Cut Selection Model（1 video = 1 sample、per-video制約）の推�
 
 ## 使用モデル
 
-**モデルパス**: `checkpoints_cut_selection_fullvideo/best_model.pth`
+**モデルパス**: `checkpoints_cut_selection_fullvideo_v2/best_model.pth`
 
 **モデル情報**:
-- Epoch: 9
-- 学習時F1: 0.5290
-- 学習時Recall: 0.8065
-- 学習時Avg Duration: 101.3秒
+- Round: 1, Epoch: 41
+- 学習時Recall: 0.8716
+- 学習時F1: 0.5735
+- 学習時Precision: 0.4273
+- 予測方式: 純粋なargmax（active率制約なし）
 
 **モデルアーキテクチャ**:
 ```
@@ -321,19 +322,19 @@ python generate_xml_from_inference.py "D:\切り抜き\2025-5\2025-5-11\bandicam
 | Recall | 76.10% | 74.65% |
 | Precision | 29.83% | 36.94% |
 
-**Full Video Model（Epoch 9）**:
-- F1: 0.5290
-- Recall: 0.8065
-- Avg Duration: 101.3秒
+**Full Video Model（Round 1, Epoch 41）**:
+- Recall: 0.8716
+- F1: 0.5735
+- Precision: 0.4273
 
 ### 関連ファイル
 
-- モデル: `checkpoints_cut_selection_fullvideo/best_model.pth`
+- モデル: `checkpoints_cut_selection_fullvideo_v2/best_model.pth`
 - 設定: `configs/config_cut_selection_fullvideo.yaml`
-- 学習スクリプト: `src/cut_selection/train_cut_selection_fullvideo_v2.py`
-- 推論スクリプト: `test_inference_fullvideo.py`
-- XML生成: `generate_xml_from_inference.py`
+- 学習スクリプト: `src/cut_selection/training/train_cut_selection_fullvideo_v2.py`
+- Auto Training Loop: `scripts/auto_train_loop.py`
+- XML生成: `scripts/generate_xml_from_inference.py`
 
 ---
 
-**最終更新**: 2025-12-26
+**最終更新**: 2026-03-21

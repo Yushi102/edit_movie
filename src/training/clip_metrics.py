@@ -310,6 +310,6 @@ if __name__ == "__main__":
     
     metrics = calculate_batch_clip_metrics(predictions, targets, fps=10.0, active_threshold=0.5)
     
-    print("\nClip-level metrics:")
+    logger.info("\nClip-level metrics:")
     for key, value in metrics.items():
-        print(f"  {key}: {value:.4f}")
+        logger.info(f"  {key}: {value:.4f}")

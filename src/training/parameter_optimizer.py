@@ -387,6 +387,6 @@ if __name__ == "__main__":
     optimizer = InferenceParameterOptimizer(fps=10.0)
     params = optimizer.optimize_parameters(predictions, targets)
     
-    print("\nOptimized parameters:")
+    logger.info("\nOptimized parameters:")
     for key, value in params.items():
-        print(f"  {key}: {value:.4f}")
+        logger.info(f"  {key}: {value:.4f}")

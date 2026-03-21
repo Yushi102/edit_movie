@@ -99,9 +99,9 @@ class EnhancedCutSelectionDatasetFullVideo(Dataset):
         if self.has_temporal:
             result['temporal'] = torch.from_numpy(self.temporal_features[idx]).float()
         else:
-            # Fallback: create zero tensor
+            # Fallback: create zero tensor (dim=0 when no temporal features)
             seq_len = len(self.audio_features[idx])
-            result['temporal'] = torch.zeros(seq_len, 7).float()
+            result['temporal'] = torch.zeros(seq_len, self.temporal_dim).float()
         
         return result
     

@@ -323,8 +323,8 @@ if __name__ == "__main__":
     analyzer = ClassBalanceAnalyzer()
     results = analyzer.analyze_dataset(temp_path, num_tracks=20)
     
-    print("\n✅ Analysis complete!")
-    print(f"Recommended active_weight: {results['recommended_weights']['active_weight']:.2f}")
+    logger.info("\n✅ Analysis complete!")
+    logger.info(f"Recommended active_weight: {results['recommended_weights']['active_weight']:.2f}")
     
     # クリーンアップ
     import os

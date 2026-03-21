@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from src.model.model import MultiTrackTransformer
 from src.model.loss import MultiTrackLoss, GradientClipper, prepare_targets_from_input
+from src.utils.tensor_utils import check_nan_inf, calculate_modality_statistics, log_modality_statistics
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -31,7 +32,9 @@ class TrainingPipeline:
         gradient_clipper: Optional[GradientClipper] = None,
         device: str = 'cpu',
         checkpoint_dir: str = 'checkpoints',
-        use_amp: bool = True
+        use_amp: bool = True,
+        fps: float = 10.0,
+        clip_metrics_config: Optional[Dict] = None
     ):
         """
         Initialize training pipeline
@@ -45,6 +48,8 @@ class TrainingPipeline:
             device: Device to train on ('cpu' or 'cuda')
             checkpoint_dir: Directory to save checkpoints
             use_amp: Use automatic mixed precision training (faster, less memory)
+            fps: Frames per second for clip metrics calculation (default: 10.0)
+            clip_metrics_config: Configuration for clip-level metrics (default: None)
         """
         self.model = model.to(device)
         self.loss_fn = loss_fn
@@ -54,6 +59,17 @@ class TrainingPipeline:
         self.device = device
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(exist_ok=True)
+        self.fps = fps
+        
+        # Clip metrics configuration
+        if clip_metrics_config is None:
+            clip_metrics_config = {
+                'enabled': True,
+                'fps': fps,
+                'active_threshold': 0.5,
+                'calculate_every': 5
+            }
+        self.clip_metrics_config = clip_metrics_config
         
         # Mixed precision training
         self.use_amp = use_amp and device == 'cuda'
@@ -139,16 +155,11 @@ class TrainingPipeline:
                 
                 # Track modality utilization
                 batch_size = audio.shape[0]
-                modality_stats['total_samples'] += batch_size
-                if modality_mask is not None:
-                    # Count samples with audio/visual available
-                    audio_avail = modality_mask[:, :, 0].any(dim=1).sum().item()
-                    visual_avail = modality_mask[:, :, 1].any(dim=1).sum().item()
-                    both_avail = (modality_mask[:, :, 0].any(dim=1) & modality_mask[:, :, 1].any(dim=1)).sum().item()
-                    
-                    modality_stats['audio_available'] += audio_avail
-                    modality_stats['visual_available'] += visual_avail
-                    modality_stats['both_available'] += both_avail
+                batch_stats = calculate_modality_statistics(modality_mask, batch_size)
+                modality_stats['total_samples'] += batch_stats['total_samples']
+                modality_stats['audio_available'] += batch_stats['audio_available']
+                modality_stats['visual_available'] += batch_stats['visual_available']
+                modality_stats['both_available'] += batch_stats['both_available']
                 
                 # Prepare targets from track data
                 targets = prepare_targets_from_input(track)
@@ -180,8 +191,8 @@ class TrainingPipeline:
                 padding_mask = masks
             
             # Check for NaN or Inf
-            if torch.isnan(losses['total']) or torch.isinf(losses['total']):
-                logger.warning(f"⚠️  NaN/Inf detected in batch {batch_idx}! Skipping...")
+            if check_nan_inf(losses, name=f"losses (batch {batch_idx})"):
+                logger.warning(f"⚠️  Skipping batch {batch_idx} due to NaN/Inf in losses")
                 continue
             
             # Backward pass with mixed precision
@@ -196,8 +207,9 @@ class TrainingPipeline:
                     self.scaler.unscale_(self.optimizer)
                     grad_norm = self.gradient_clipper.clip(self.model)
                     
-                    # Check for gradient explosion
-                    if grad_norm > 100.0:
+                    # Check for gradient explosion using configured threshold
+                    warn_threshold = getattr(self.gradient_clipper, 'warn_threshold', 100.0)
+                    if grad_norm > warn_threshold:
                         logger.warning(f"⚠️  Large gradient norm detected: {grad_norm:.2f}")
                 
                 # Optimizer step with scaler
@@ -211,8 +223,9 @@ class TrainingPipeline:
                 if self.gradient_clipper is not None:
                     grad_norm = self.gradient_clipper.clip(self.model)
                     
-                    # Check for gradient explosion
-                    if grad_norm > 100.0:
+                    # Check for gradient explosion using configured threshold
+                    warn_threshold = getattr(self.gradient_clipper, 'warn_threshold', 100.0)
+                    if grad_norm > warn_threshold:
                         logger.warning(f"⚠️  Large gradient norm detected: {grad_norm:.2f}")
                 
                 # Optimizer step
@@ -235,15 +248,7 @@ class TrainingPipeline:
         avg_components = {k: v / num_batches for k, v in loss_components.items()} if num_batches > 0 else loss_components
         
         # Log modality utilization statistics
-        if modality_stats['total_samples'] > 0:
-            audio_pct = 100.0 * modality_stats['audio_available'] / modality_stats['total_samples']
-            visual_pct = 100.0 * modality_stats['visual_available'] / modality_stats['total_samples']
-            both_pct = 100.0 * modality_stats['both_available'] / modality_stats['total_samples']
-            
-            logger.info(f"\n📊 Modality Utilization (Epoch {epoch} Train):")
-            logger.info(f"  Audio available: {audio_pct:.1f}% ({modality_stats['audio_available']}/{modality_stats['total_samples']})")
-            logger.info(f"  Visual available: {visual_pct:.1f}% ({modality_stats['visual_available']}/{modality_stats['total_samples']})")
-            logger.info(f"  Both available: {both_pct:.1f}% ({modality_stats['both_available']}/{modality_stats['total_samples']})")
+        log_modality_statistics(modality_stats, epoch, "Train")
         
         return {
             'total_loss': avg_loss,
@@ -313,16 +318,11 @@ class TrainingPipeline:
                     
                     # Track modality utilization
                     batch_size = audio.shape[0]
-                    modality_stats['total_samples'] += batch_size
-                    if modality_mask is not None:
-                        # Count samples with audio/visual available
-                        audio_avail = modality_mask[:, :, 0].any(dim=1).sum().item()
-                        visual_avail = modality_mask[:, :, 1].any(dim=1).sum().item()
-                        both_avail = (modality_mask[:, :, 0].any(dim=1) & modality_mask[:, :, 1].any(dim=1)).sum().item()
-                        
-                        modality_stats['audio_available'] += audio_avail
-                        modality_stats['visual_available'] += visual_avail
-                        modality_stats['both_available'] += both_avail
+                    batch_stats = calculate_modality_statistics(modality_mask, batch_size)
+                    modality_stats['total_samples'] += batch_stats['total_samples']
+                    modality_stats['audio_available'] += batch_stats['audio_available']
+                    modality_stats['visual_available'] += batch_stats['visual_available']
+                    modality_stats['both_available'] += batch_stats['both_available']
                     
                     # Prepare targets from track data
                     targets = prepare_targets_from_input(track)
@@ -354,8 +354,8 @@ class TrainingPipeline:
                     padding_mask = masks
                 
                 # Check for NaN or Inf
-                if torch.isnan(losses['total']) or torch.isinf(losses['total']):
-                    logger.warning(f"⚠️  NaN/Inf detected in validation! Skipping batch...")
+                if check_nan_inf(losses, name="losses (validation)"):
+                    logger.warning(f"⚠️  Skipping validation batch due to NaN/Inf in losses")
                     continue
                 
                 # Accumulate losses
@@ -365,25 +365,27 @@ class TrainingPipeline:
                 num_batches += 1
                 
                 # クリップレベルの指標を計算（5エポックごと、または最終エポック）
-                if calculate_clip_metrics and (epoch % 5 == 0 or epoch == 1):
-                    try:
-                        from src.training.clip_metrics import calculate_batch_clip_metrics
-                        
-                        batch_clip_metrics = calculate_batch_clip_metrics(
-                            predictions=predictions,
-                            targets=targets,
-                            fps=10.0,
-                            active_threshold=0.5
-                        )
-                        
-                        # 集計
-                        for key, value in batch_clip_metrics.items():
-                            if key not in clip_metrics_sum:
-                                clip_metrics_sum[key] = 0.0
-                            clip_metrics_sum[key] += value
-                        clip_metrics_count += 1
-                    except Exception as e:
-                        logger.debug(f"Failed to calculate clip metrics: {e}")
+                if calculate_clip_metrics and self.clip_metrics_config.get('enabled', True):
+                    calculate_every = self.clip_metrics_config.get('calculate_every', 5)
+                    if calculate_every > 0 and (epoch % calculate_every == 0 or epoch == 1):
+                        try:
+                            from src.training.clip_metrics import calculate_batch_clip_metrics
+                            
+                            batch_clip_metrics = calculate_batch_clip_metrics(
+                                predictions=predictions,
+                                targets=targets,
+                                fps=self.clip_metrics_config.get('fps', self.fps),
+                                active_threshold=self.clip_metrics_config.get('active_threshold', 0.5)
+                            )
+                            
+                            # 集計
+                            for key, value in batch_clip_metrics.items():
+                                if key not in clip_metrics_sum:
+                                    clip_metrics_sum[key] = 0.0
+                                clip_metrics_sum[key] += value
+                            clip_metrics_count += 1
+                        except Exception as e:
+                            logger.debug(f"Failed to calculate clip metrics: {e}")
                 
                 # Update progress bar
                 pbar.set_postfix({'loss': losses['total'].item()})
@@ -407,15 +409,7 @@ class TrainingPipeline:
             logger.info(f"  Avg Target Duration: {avg_clip_metrics.get('avg_target_total_duration', 0.0):.1f}s")
         
         # Log modality utilization statistics
-        if modality_stats['total_samples'] > 0:
-            audio_pct = 100.0 * modality_stats['audio_available'] / modality_stats['total_samples']
-            visual_pct = 100.0 * modality_stats['visual_available'] / modality_stats['total_samples']
-            both_pct = 100.0 * modality_stats['both_available'] / modality_stats['total_samples']
-            
-            logger.info(f"\n📊 Modality Utilization (Epoch {epoch} Val):")
-            logger.info(f"  Audio available: {audio_pct:.1f}% ({modality_stats['audio_available']}/{modality_stats['total_samples']})")
-            logger.info(f"  Visual available: {visual_pct:.1f}% ({modality_stats['visual_available']}/{modality_stats['total_samples']})")
-            logger.info(f"  Both available: {both_pct:.1f}% ({modality_stats['both_available']}/{modality_stats['total_samples']})")
+        log_modality_statistics(modality_stats, epoch, "Val")
         
         return {
             'total_loss': avg_loss,
@@ -441,6 +435,38 @@ class TrainingPipeline:
             val_metrics: Validation metrics
             is_best: Whether this is the best model so far
         """
+        # Determine model type and extract config accordingly
+        from src.model.model import MultimodalTransformer, MultiTrackTransformer
+        
+        if isinstance(self.model, MultimodalTransformer):
+            # MultimodalTransformer has all attributes
+            model_config = {
+                'audio_features': self.model.audio_features,
+                'visual_features': self.model.visual_features,
+                'track_features': self.model.track_features,
+                'd_model': self.model.d_model,
+                'nhead': self.model.nhead,
+                'num_layers': self.model.num_layers,
+                'num_tracks': self.model.num_tracks,
+                'max_asset_classes': self.model.max_asset_classes,
+                'enable_multimodal': self.model.enable_multimodal,
+                'fusion_type': self.model.fusion_type,
+            }
+        elif isinstance(self.model, MultiTrackTransformer):
+            # MultiTrackTransformer has limited attributes
+            model_config = {
+                'input_features': self.model.input_features,
+                'd_model': self.model.d_model,
+                'num_tracks': self.model.num_tracks,
+                'max_asset_classes': self.model.max_asset_classes,
+            }
+        else:
+            # Fallback: try to extract common attributes
+            model_config = {
+                'd_model': getattr(self.model, 'd_model', None),
+                'num_tracks': getattr(self.model, 'num_tracks', None),
+            }
+        
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
@@ -450,16 +476,7 @@ class TrainingPipeline:
             'history': self.history,
             'best_val_loss': self.best_val_loss,
             'best_epoch': self.best_epoch,
-            'config': {
-                'audio_features': self.model.audio_features,
-                'visual_features': self.model.visual_features,
-                'track_features': self.model.track_features,
-                'd_model': self.model.d_model,
-                'nhead': self.model.nhead,
-                'num_layers': self.model.num_layers,
-                'enable_multimodal': self.model.enable_multimodal,
-                'fusion_type': self.model.fusion_type,
-            }
+            'config': model_config
         }
         
         if self.scheduler is not None:
@@ -505,7 +522,7 @@ class TrainingPipeline:
         val_loader: DataLoader,
         num_epochs: int,
         save_every: int = 5,
-        early_stopping_patience: Optional[int] = None
+        early_stopping_patience: Optional[int] = 15
     ):
         """
         Full training loop
@@ -646,7 +663,8 @@ if __name__ == "__main__":
         enable_multimodal=config.get('enable_multimodal', False),
         audio_features=config.get('audio_features', 17),
         visual_features=config.get('visual_features', 522),
-        fusion_type=config.get('fusion_type', 'gated')
+        fusion_type=config.get('fusion_type', 'gated'),
+        max_sequence_length=config.get('max_sequence_length', 20000)
     )
     
     # Create loss function
@@ -655,8 +673,8 @@ if __name__ == "__main__":
         asset_weight=config.get('asset_weight', 1.0),
         scale_weight=config.get('scale_weight', 1.0),
         position_weight=config.get('position_weight', 1.0),
-        rotation_weight=config.get('rotation_weight', 1.0),
-        crop_weight=config.get('crop_weight', 1.0),
+        rotation_weight=config.get('rotation_weight', 0.1),
+        crop_weight=config.get('crop_weight', 0.1),
         ignore_inactive=config.get('ignore_inactive', True)
     )
     
@@ -678,9 +696,21 @@ if __name__ == "__main__":
     )
     
     # Create gradient clipper
-    gradient_clipper = GradientClipper(max_norm=config.get('grad_clip', 1.0))
+    grad_clip_config = config.get('gradient_clipping', {})
+    gradient_clipper = GradientClipper(
+        max_norm=grad_clip_config.get('max_norm', config.get('grad_clip', 2.0)),
+        norm_type=grad_clip_config.get('norm_type', 2.0),
+        warn_threshold=grad_clip_config.get('warn_threshold', 100.0)
+    )
     
     # Create training pipeline
+    clip_metrics_config = config.get('clip_metrics', {
+        'enabled': True,
+        'fps': config.get('fps', 10.0),
+        'active_threshold': 0.5,
+        'calculate_every': 5
+    })
+    
     pipeline = TrainingPipeline(
         model=model,
         loss_fn=loss_fn,
@@ -688,17 +718,23 @@ if __name__ == "__main__":
         scheduler=scheduler,
         gradient_clipper=gradient_clipper,
         device=device,
-        checkpoint_dir=config.get('checkpoint_dir', 'checkpoints')
+        checkpoint_dir=config.get('checkpoint_dir', 'checkpoints'),
+        fps=config.get('fps', 10.0),
+        clip_metrics_config=clip_metrics_config
     )
     
     # Create dataloaders
     logger.info("Creating dataloaders...")
+    dataset_config = config.get('dataset', {})
     train_loader, val_loader = create_multimodal_dataloaders(
         train_npz=config.get('train_data', 'preprocessed_data/train_sequences.npz'),
         val_npz=config.get('val_data', 'preprocessed_data/val_sequences.npz'),
         features_dir=config.get('features_dir', 'data/processed/input_features'),
         batch_size=config.get('batch_size', 8),
-        num_workers=config.get('num_workers', 0)
+        num_workers=config.get('num_workers', 0),
+        enable_multimodal=config.get('enable_multimodal', True),
+        active_threshold=dataset_config.get('active_threshold', 0.0),
+        strict_dimension_check=dataset_config.get('strict_dimension_check', True)
     )
     
     # Train
@@ -707,7 +743,8 @@ if __name__ == "__main__":
         train_loader=train_loader,
         val_loader=val_loader,
         num_epochs=config.get('num_epochs', 100),
-        save_every=config.get('save_every', 5)
+        save_every=config.get('save_every', 5),
+        early_stopping_patience=config.get('early_stopping_patience', 15)
     )
     
     logger.info("\n✅ Training complete!")

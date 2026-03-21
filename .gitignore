@@ -66,6 +66,7 @@ models/checkpoints_50epochs/
 models/test_checkpoints/
 checkpoints/
 checkpoints_cut_selection/
+checkpoints_cut_selection_fullvideo_v2/
 *.pth
 *.pkl
 
@@ -101,6 +102,9 @@ test_*.py
 
 # Preprocessed data
 preprocessed_data/
+
+# Model cache directories
+None/
 
 # Project documentation (auto-generated)
 CLEANUP_SUMMARY.md

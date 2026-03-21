@@ -9,64 +9,24 @@ from src.model.multimodal_modules import ModalityEmbedding
 from src.cut_selection.utils.positional_encoding import PositionalEncoding
 
 
-class ThreeModalityFusion(nn.Module):
-    """
-    Fusion module for 3 modalities: audio, visual, temporal
-    
-    Uses gated fusion to combine modalities with learned importance weights
-    """
-    
+class TwoModalityFusion(nn.Module):
+    """Fusion for audio + visual modalities"""
+
     def __init__(self, d_model: int, dropout: float = 0.1):
         super().__init__()
-        
-        self.d_model = d_model
-        
-        # Gating mechanism for each modality
-        self.audio_gate = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.Sigmoid()
-        )
-        
-        self.visual_gate = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.Sigmoid()
-        )
-        
-        self.temporal_gate = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.Sigmoid()
-        )
-        
-        # Fusion layer
+        self.audio_gate = nn.Sequential(nn.Linear(d_model, d_model), nn.Sigmoid())
+        self.visual_gate = nn.Sequential(nn.Linear(d_model, d_model), nn.Sigmoid())
         self.fusion = nn.Sequential(
-            nn.Linear(d_model * 3, d_model),
+            nn.Linear(d_model * 2, d_model),
             nn.LayerNorm(d_model),
             nn.ReLU(),
             nn.Dropout(dropout)
         )
-    
-    def forward(self, audio: torch.Tensor, visual: torch.Tensor, temporal: torch.Tensor):
-        """
-        Fuse three modalities
-        
-        Args:
-            audio: (batch, seq_len, d_model)
-            visual: (batch, seq_len, d_model)
-            temporal: (batch, seq_len, d_model)
-        
-        Returns:
-            fused: (batch, seq_len, d_model)
-        """
-        # Apply gating
+
+    def forward(self, audio: torch.Tensor, visual: torch.Tensor, temporal: torch.Tensor = None):
         audio_gated = audio * self.audio_gate(audio)
         visual_gated = visual * self.visual_gate(visual)
-        temporal_gated = temporal * self.temporal_gate(temporal)
-        
-        # Concatenate and fuse
-        concat = torch.cat([audio_gated, visual_gated, temporal_gated], dim=-1)
-        fused = self.fusion(concat)
-        
-        return fused
+        return self.fusion(torch.cat([audio_gated, visual_gated], dim=-1))
 
 
 class EnhancedCutSelectionModel(nn.Module):
@@ -98,14 +58,19 @@ class EnhancedCutSelectionModel(nn.Module):
         # Modality embeddings
         self.audio_embedding = ModalityEmbedding(audio_features, d_model, dropout)
         self.visual_embedding = ModalityEmbedding(visual_features, d_model, dropout)
-        self.temporal_embedding = ModalityEmbedding(temporal_features, d_model, dropout)
+        # temporal_features=0 means no temporal modality; use zero embedding
+        self.has_temporal = temporal_features > 0
+        if self.has_temporal:
+            self.temporal_embedding = ModalityEmbedding(temporal_features, d_model, dropout)
+        else:
+            self.temporal_embedding = None
         
         # Positional encoding (essential for temporal understanding)
         # max_len=20000 to handle long videos (up to 2000 seconds at 10fps)
         self.positional_encoding = PositionalEncoding(d_model, max_len=20000, dropout=dropout)
         
-        # Fusion (3 modalities: audio + visual + temporal)
-        self.fusion = ThreeModalityFusion(d_model, dropout=dropout)
+        # Fusion (audio + visual, temporal ignored when dim=0)
+        self.fusion = TwoModalityFusion(d_model, dropout=dropout)
         
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -157,7 +122,10 @@ class EnhancedCutSelectionModel(nn.Module):
         # Embed modalities
         audio_emb = self.audio_embedding(audio)  # (batch, seq_len, d_model)
         visual_emb = self.visual_embedding(visual)  # (batch, seq_len, d_model)
-        temporal_emb = self.temporal_embedding(temporal)  # (batch, seq_len, d_model)
+        if self.has_temporal:
+            temporal_emb = self.temporal_embedding(temporal)
+        else:
+            temporal_emb = torch.zeros_like(audio_emb)
         
         # Fuse modalities
         fused = self.fusion(audio_emb, visual_emb, temporal_emb)  # (batch, seq_len, d_model)

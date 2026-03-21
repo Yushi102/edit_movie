@@ -70,10 +70,11 @@ python scripts/video_to_xml.py "動画パス" --output "custom_output.xml"
 ### STEP 2: モデル読み込み
 
 Full Video Modelを読み込みます：
-- モデルパス: `checkpoints_cut_selection_fullvideo/best_model.pth`
+- モデルパス: `checkpoints_cut_selection_fullvideo_v2/best_model.pth`
 - アーキテクチャ: Transformer Encoder
 - 入力: 784次元（音声235 + 映像543 + 時系列6）
 - 出力: 各フレームのactive/inactive確率
+- 予測方式: 純粋なargmax（active率制約なし）
 
 ### STEP 3: 推論実行
 

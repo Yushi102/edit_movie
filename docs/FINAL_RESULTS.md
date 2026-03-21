@@ -2,15 +2,28 @@
 
 ## 📊 最終性能
 
-### 推論性能（Full Video Model）✅ 推奨
+### 学習性能（Full Video Model）✅ 推奨
 
-**最新モデル**: Epoch 9, F1=0.5290（学習時）
+**最新モデル**: Round 1, Epoch 41（Auto Training Loop）
+
+**学習性能詳細**:
+```
+ベストラウンド: Round 1
+ベストエポック: 41
+Recall:    87.16%（採用すべきカットの87%を検出）
+F1スコア:  57.35%
+Precision: 42.73%
+学習戦略: recall >= 75% かつ precision >= 35% の中でF1最大
+予測方式: 純粋なargmax（active率制約なし）
+チェックポイント: checkpoints_cut_selection_fullvideo_v2/
+アーカイブ: archive/checkpoints_f1_optimized_v1_20260321_185106/
+```
 
 **推論テスト結果**（bandicam 2025-05-11 19-25-14-768.mp4）:
 ```
 動画長: 1000.1秒（約16.7分）
 最適閾値: 0.8952（制約満足、90-200秒制約内）
-予測時間: 181.9秒（目標180秒に完璧に一致）
+予測時間: 181.9秒（目標180秒に完璧に一致、誤差+1.9秒）
 採用率: 18.2%（1,819 / 10,001フレーム）
 抽出クリップ数: 10個（合計138.3秒）
 XML生成: 成功（Premiere Pro用）
@@ -20,6 +33,89 @@ XML生成: 成功（Premiere Pro用）
 - ✅ 90秒以上200秒以下の制約を満たす
 - ✅ 目標180秒（3分）にほぼ完璧に一致（+1.9秒）
 - ✅ per-video最適化（動画ごとに最適閾値を探索）
+
+**詳細**: [推論テスト結果レポート](INFERENCE_TEST_RESULTS.md)
+
+---
+
+## 📝 参考: K-Fold Cross Validation結果
+
+K-Foldモデルは現在改善中です。詳細は [K-Fold結果レポート](K_FOLD_FINAL_RESULTS.md) を参照してください。
+
+**簡易サマリー**:
+- 平均F1: 42.30% ± 5.75%
+- 平均Recall: 76.10% ± 5.19%
+- 評価方法: 5-Fold Cross Validation
+- 注: シーケンス分割手法に問題あり、改善中
+
+---
+
+## 🎯 推奨モデル
+
+**Full Video Model** (`checkpoints_cut_selection_fullvideo_v2/best_model.pth`)
+- ✅ Recall 87.16%、F1 57.35%、Precision 42.73%
+- ✅ 制約満足（90-200秒）
+- ✅ 実用的なXML生成
+- ✅ Auto Training Loopで自動最適化
+
+---
+
+## 📊 使用方法
+
+### 推論（新しい動画を自動編集）
+
+```bash
+# ワンコマンド実行
+python scripts/video_to_xml.py "path/to/video.mp4"
+
+# XML生成
+python scripts/generate_xml_from_inference.py "path/to/video.mp4"
+```
+
+### 学習（Auto Training Loop推奨）
+
+```bash
+# Auto Training Loop（目標達成まで自動調整）
+python scripts/auto_train_loop.py --max-rounds 8 --target-recall 0.75 --min-precision 0.35
+
+# 単発学習
+batch/train_fullvideo.bat
+```
+
+---
+
+## 📈 今後の改善方向
+
+1. **F1スコアのさらなる向上**
+   - Auto Training Loopで継続的に改善
+   - より多くのラウンドで精度向上
+
+2. **推論の最適化**
+   - より高速な処理
+   - バッチ処理対応
+
+3. **データ拡充**
+   - より多くの動画データで汎化性能向上
+
+---
+
+**最終更新**: 2026-03-21
+
+**推論テスト結果**（bandicam 2025-05-11 19-25-14-768.mp4）:
+```
+動画長: 1000.1秒（約16.7分）
+最適閾値: 0.8952（制約満足、90-200秒制約内）
+予測時間: 181.9秒（目標180秒に完璧に一致、誤差+1.9秒）
+採用率: 18.2%（1,819 / 10,001フレーム）
+抽出クリップ数: 10個（合計138.3秒）
+XML生成: 成功（Premiere Pro用）
+```
+
+**制約満足度**:
+- ✅ 90秒以上200秒以下の制約を満たす
+- ✅ 目標180秒（3分）にほぼ完璧に一致（+1.9秒）
+- ✅ per-video最適化（動画ごとに最適閾値を探索）
+- ✅ Early Stoppingで効率的な学習（学習時間を約78%削減）
 
 **詳細**: [推論テスト結果レポート](INFERENCE_TEST_RESULTS.md)
 

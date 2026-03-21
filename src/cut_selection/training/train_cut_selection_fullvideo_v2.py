@@ -71,9 +71,9 @@ class TrainingVisualizer:
         self.setup_plot()
     
     def setup_plot(self):
-        """グラフの初期設定"""
+        """Initialize graph settings"""
         self.fig, self.axes = plt.subplots(3, 2, figsize=(15, 14))
-        self.fig.suptitle('Full Video Training - 学習状況', fontsize=16, fontweight='bold')
+        self.fig.suptitle('Full Video Training - Training Progress', fontsize=16, fontweight='bold')
         plt.tight_layout()
     
     def update(self, epoch: int, train_losses: dict, val_metrics: dict):
@@ -95,43 +95,37 @@ class TrainingVisualizer:
         self.history['val_pred_inactive_ratio'].append(val_metrics.get('pred_inactive_ratio', 0.0) * 100)
         self.history['optimal_threshold'].append(val_metrics.get('optimal_threshold', 0.0))
         self.history['pred_total_duration'].append(val_metrics['avg_pred_duration'])
-        
-        # グラフを完全にクリア
-        for ax in self.axes.flat:
-            ax.cla()
-        
+
+        # figを毎回作り直す（twin軸の積み重なりを防ぐ）
+        plt.close(self.fig)
+        self.fig, self.axes = plt.subplots(3, 2, figsize=(15, 14))
+
         epochs = self.history['epoch']
         
-        # 1. 損失関数
+        # 1. Loss Function
         ax = self.axes[0, 0]
         ax.plot(epochs, self.history['train_loss'], 'b-', label='Train Loss', linewidth=2)
         ax.plot(epochs, self.history['val_loss'], 'r-', label='Val Loss', linewidth=2)
-        ax.set_title('損失関数（Loss）')
-        ax.set_xlabel('エポック')
+        ax.set_title('Loss Function')
+        ax.set_xlabel('Epoch')
         ax.set_ylabel('Loss')
         ax.legend()
         ax.grid(True, alpha=0.3)
         
-        # 2. 損失の内訳（CE Lossを左軸、TV Lossを右軸）
+        # 2. Loss Breakdown (CE Loss on left axis, TV Loss on right axis)
         ax = self.axes[0, 1]
-        
-        # 既存のtwin軸を削除
-        for twin_ax in list(self.fig.axes):
-            if twin_ax is not ax and twin_ax.bbox.bounds == ax.bbox.bounds:
-                twin_ax.remove()
-        
         ax2 = ax.twinx()
         
         # CE Loss（左軸）
         line1 = ax.plot(epochs, self.history['train_ce_loss'], 'b-', label='Train CE', linewidth=2.5, marker='o', markersize=5)
         line2 = ax.plot(epochs, self.history['val_ce_loss'], 'r-', label='Val CE', linewidth=2.5, marker='o', markersize=5)
-        ax.set_xlabel('エポック')
+        ax.set_xlabel('Epoch')
         ax.set_ylabel('CE Loss', color='black', fontweight='bold')
         ax.tick_params(axis='y')
         
         # TV Loss（右軸）
-        line3 = ax2.plot(epochs, self.history['train_tv_loss'], 'b--', label='Train TV', linewidth=2, marker='s', markersize=4)
-        line4 = ax2.plot(epochs, self.history['val_tv_loss'], 'r--', label='Val TV', linewidth=2, marker='s', markersize=4)
+        line3 = ax2.plot(epochs, self.history['train_tv_loss'], 'g--', label='Train TV', linewidth=2.5, marker='s', markersize=4)
+        line4 = ax2.plot(epochs, self.history['val_tv_loss'], 'orange', linestyle='--', label='Val TV', linewidth=2.5, marker='^', markersize=4)
         ax2.set_ylabel('TV Loss', color='green', fontweight='bold')
         ax2.tick_params(axis='y', labelcolor='green')
         
@@ -141,16 +135,16 @@ class TrainingVisualizer:
         legend = ax.legend(lines, labels, loc='upper right', fontsize=9, framealpha=0.9)
         legend.get_frame().set_facecolor('white')
         
-        ax.set_title('損失の内訳（CE=左軸、TV=右軸）', fontweight='bold')
+        ax.set_title('Loss Breakdown (CE=left, TV=right)', fontweight='bold')
         ax.grid(True, alpha=0.3, linestyle=':')
         
-        # 3. 分類性能
+        # 3. Classification Performance
         ax = self.axes[1, 0]
         ax.plot(epochs, self.history['val_accuracy'], 'g-', label='Accuracy', linewidth=2, marker='o')
         ax.plot(epochs, self.history['val_f1'], 'purple', label='F1 Score', linewidth=2, marker='s')
-        ax.set_title('分類性能（Accuracy & F1）')
-        ax.set_xlabel('エポック')
-        ax.set_ylabel('スコア')
+        ax.set_title('Classification Performance (Accuracy & F1)')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Score')
         ax.set_ylim([0, 1])
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -161,64 +155,64 @@ class TrainingVisualizer:
         ax.plot(epochs, self.history['val_recall'], 'r-', label='Recall', linewidth=2, marker='s')
         ax.plot(epochs, self.history['val_specificity'], 'orange', label='Specificity', linewidth=2, marker='^')
         ax.set_title('Precision, Recall, Specificity')
-        ax.set_xlabel('エポック')
-        ax.set_ylabel('スコア')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Score')
         ax.set_ylim([0, 1])
         ax.legend()
         ax.grid(True, alpha=0.3)
         
-        # 5. 平均予測時間（Duration制約）
+        # 5. Average Predicted Duration (Duration Constraint)
         ax = self.axes[2, 0]
-        ax.plot(epochs, self.history['pred_total_duration'], 'green', label='平均予測時間', linewidth=2, marker='o')
+        ax.plot(epochs, self.history['pred_total_duration'], 'green', label='Avg Predicted Duration', linewidth=2, marker='o')
         
         # 制約線を追加
         min_duration = self.config.get('min_total_duration', 90.0)
         target_duration = self.config.get('max_total_duration', 180.0)
         hard_max_duration = self.config.get('hard_max_duration', 200.0)
         
-        ax.axhline(y=min_duration, color='red', linestyle='--', alpha=0.5, label=f'最低: {min_duration:.0f}秒')
-        ax.axhline(y=target_duration, color='blue', linestyle='--', alpha=0.5, label=f'目標: {target_duration:.0f}秒')
-        ax.axhline(y=hard_max_duration, color='orange', linestyle='--', alpha=0.5, label=f'上限: {hard_max_duration:.0f}秒')
+        ax.axhline(y=min_duration, color='red', linestyle='--', alpha=0.5, label=f'Min: {min_duration:.0f}s')
+        ax.axhline(y=target_duration, color='blue', linestyle='--', alpha=0.5, label=f'Target: {target_duration:.0f}s')
+        ax.axhline(y=hard_max_duration, color='orange', linestyle='--', alpha=0.5, label=f'Max: {hard_max_duration:.0f}s')
         
-        ax.set_title('平均予測時間（動画ごと）')
-        ax.set_xlabel('エポック')
-        ax.set_ylabel('時間（秒）')
+        ax.set_title('Average Predicted Duration (per video)')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Time (seconds)')
         ax.legend(loc='best')
         ax.grid(True, alpha=0.3)
         
         # 現在の時間を色分けして表示
         if len(epochs) > 0:
             current_duration = self.history['pred_total_duration'][-1]
-            duration_text = f'現在: {current_duration:.1f}秒'
+            duration_text = f'Current: {current_duration:.1f}s'
             if current_duration < min_duration:
                 color = 'red'
-                status = '⚠️ 短すぎ'
+                status = '⚠️ Too Short'
             elif current_duration <= target_duration:
                 color = 'green'
-                status = '✅ 理想的'
+                status = '✅ Ideal'
             elif current_duration <= hard_max_duration:
                 color = 'orange'
-                status = '⚠️ 少し超過'
+                status = '⚠️ Slightly Over'
             else:
                 color = 'red'
-                status = '❌ 超過'
+                status = '❌ Over Limit'
             
             ax.text(0.02, 0.02, f'{duration_text}\n{status}', 
                    transform=ax.transAxes, fontsize=11, verticalalignment='bottom',
                    bbox=dict(boxstyle='round', facecolor=color, alpha=0.3, edgecolor=color))
         
-        # 6. 予測の採用/不採用割合
+        # 6. Prediction Active/Inactive Ratio
         ax = self.axes[2, 1]
-        ax.plot(epochs, self.history['val_pred_active_ratio'], 'g-', label='採用 (Active)', linewidth=2, marker='o')
-        ax.plot(epochs, self.history['val_pred_inactive_ratio'], 'r-', label='不採用 (Inactive)', linewidth=2, marker='s')
+        ax.plot(epochs, self.history['val_pred_active_ratio'], 'g-', label='Active (Adopted)', linewidth=2, marker='o')
+        ax.plot(epochs, self.history['val_pred_inactive_ratio'], 'r-', label='Inactive (Not Adopted)', linewidth=2, marker='s')
         if len(epochs) > 0:
             true_active_ratio = val_metrics.get('true_active_ratio', 0) * 100
             true_inactive_ratio = val_metrics.get('true_inactive_ratio', 0) * 100
-            ax.axhline(y=true_active_ratio, color='g', linestyle='--', alpha=0.5, label=f'正解採用 ({true_active_ratio:.1f}%)')
-            ax.axhline(y=true_inactive_ratio, color='r', linestyle='--', alpha=0.5, label=f'正解不採用 ({true_inactive_ratio:.1f}%)')
-        ax.set_title('予測の採用/不採用割合')
-        ax.set_xlabel('エポック')
-        ax.set_ylabel('割合 (%)')
+            ax.axhline(y=true_active_ratio, color='g', linestyle='--', alpha=0.5, label=f'True Active ({true_active_ratio:.1f}%)')
+            ax.axhline(y=true_inactive_ratio, color='r', linestyle='--', alpha=0.5, label=f'True Inactive ({true_inactive_ratio:.1f}%)')
+        ax.set_title('Prediction Active/Inactive Ratio')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Ratio (%)')
         ax.set_ylim([0, 105])
         ax.legend(loc='best')
         ax.grid(True, alpha=0.3)
@@ -237,7 +231,26 @@ class TrainingVisualizer:
         # 保存
         save_path = self.checkpoint_dir / 'training_progress.png'
         self.fig.savefig(save_path, dpi=100, bbox_inches='tight')
-        logger.info(f"📊 Training visualization saved: {save_path}")
+        logger.info(f"Training visualization saved: {save_path}")
+
+        # CSVにメトリクスを追記
+        csv_path = self.checkpoint_dir / 'training_metrics.csv'
+        import csv, os
+        write_header = not os.path.exists(csv_path)
+        with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(['epoch','train_loss','val_loss','val_f1','val_precision','val_recall','val_accuracy','pred_active_ratio'])
+            writer.writerow([
+                epoch,
+                round(train_losses['total_loss'], 4),
+                round(val_metrics['loss'], 4),
+                round(val_metrics['f1'], 4),
+                round(val_metrics['precision'], 4),
+                round(val_metrics['recall'], 4),
+                round(val_metrics['accuracy'], 4),
+                round(val_metrics.get('pred_active_ratio', 0), 4),
+            ])
     
     def save_final(self):
         """最終的なグラフを高解像度で保存"""
@@ -307,25 +320,25 @@ class TrainingVisualizer:
     </style>
 </head>
 <body>
-    <h1>🔄 Full Video Training - リアルタイム進捗</h1>
+    <h1>🔄 Full Video Training - Real-time Progress</h1>
     <div class="info">
-        <p>このページは5秒ごとに自動更新されます</p>
-        <p>1動画=1サンプル | 動画ごとに90秒制約適用</p>
+        <p>This page auto-refreshes every 5 seconds</p>
+        <p>1 video = 1 sample | 90s constraint applied per video</p>
     </div>
     
     <div class="container">
         <div class="main-graph">
-            <h2>📊 学習進捗</h2>
+            <h2>📊 Training Progress</h2>
             <img src="training_progress.png?t={timestamp}" alt="Training Progress">
         </div>
     </div>
     
     <div class="timestamp">
-        <p>最終更新: <span id="timestamp"></span></p>
+        <p>Last updated: <span id="timestamp"></span></p>
     </div>
     
     <script>
-        document.getElementById('timestamp').textContent = new Date().toLocaleString('ja-JP');
+        document.getElementById('timestamp').textContent = new Date().toLocaleString('en-US');
     </script>
 </body>
 </html>
@@ -517,55 +530,10 @@ def validate(model, dataloader, criterion, device, config=None):
         
         # Calculate video duration
         video_duration = original_length / fps
-        
-        # Apply 90s constraint per video
-        # If video < 90s, accept all frames (B案)
-        if video_duration < min_total_duration:
-            logger.debug(f"Video {video_name}: {video_duration:.1f}s < {min_total_duration:.1f}s → Accept all")
-            optimal_predictions = np.ones_like(video_labels, dtype=int)
-        else:
-            # Find threshold that maximizes Recall within 90-200s constraint
-            from sklearn.metrics import precision_recall_curve
-            
-            precisions, recalls, thresholds = precision_recall_curve(video_labels, video_confidence)
-            
-            # Pre-calculate approximate durations
-            approx_durations = []
-            for thresh in thresholds:
-                candidate_predictions = (video_confidence >= thresh).astype(int)
-                active_frames = np.sum(candidate_predictions)
-                approx_duration = active_frames / fps
-                approx_durations.append(approx_duration)
-            
-            approx_durations = np.array(approx_durations)
-            
-            # Find threshold that maximizes F1 within constraints
-            best_threshold = thresholds[0] if len(thresholds) > 0 else 0.0
-            best_f1 = 0.0
-            
-            for i, (prec, rec, thresh, approx_dur) in enumerate(zip(precisions, recalls, thresholds, approx_durations)):
-                # Hard constraints
-                if approx_dur < min_total_duration * 0.95:
-                    continue
-                if approx_dur > hard_max_duration * 1.05:
-                    continue
-                
-                # Calculate F1 score
-                if prec + rec > 0:
-                    f1 = 2 * (prec * rec) / (prec + rec)
-                else:
-                    f1 = 0.0
-                
-                # Maximize F1
-                if f1 > best_f1:
-                    best_f1 = f1
-                    best_threshold = thresh
-            
-            # If no threshold satisfies constraints, use lowest threshold
-            if best_f1 == 0.0:
-                best_threshold = thresholds[0] if len(thresholds) > 0 else 0.0
-            
-            optimal_predictions = (video_confidence >= best_threshold).astype(int)
+
+        # ── 純粋なargmax予測（active率制約なし） ──
+        conf = video_confidence  # shape: (original_length,)
+        optimal_predictions = (conf > 0.0).astype(int)
         
         # Calculate per-video ratios
         video_total_samples = len(optimal_predictions)
@@ -718,13 +686,14 @@ def main():
     base_weight_active = total_train_samples / (2 * train_active_count) if train_active_count > 0 else 1.0
     base_weight_inactive = total_train_samples / (2 * train_inactive_count) if train_inactive_count > 0 else 1.0
     
-    weight_active = base_weight_active * 3.0
-    weight_inactive = base_weight_inactive * 1.0
+    weight_active = base_weight_active * 1.0
+    inactive_multiplier = config.get('inactive_weight_multiplier', 2.0)
+    weight_inactive = base_weight_inactive * inactive_multiplier  # precision改善のためinactiveを重視
     class_weights = torch.tensor([weight_inactive, weight_active], device=device)
     
     logger.info(f"  Train Active: {train_active_count:,} ({train_active_count/total_train_samples*100:.2f}%)")
     logger.info(f"  Train Inactive: {train_inactive_count:,} ({train_inactive_count/total_train_samples*100:.2f}%)")
-    logger.info(f"  Class weights: [inactive={weight_inactive:.4f}, active={weight_active:.4f}]")
+    logger.info(f"  Class weights: [inactive={weight_inactive:.4f}, active={weight_active:.4f}] (multiplier={inactive_multiplier})")
     
     # Loss and optimizer
     criterion = CombinedCutSelectionLoss(
@@ -747,8 +716,25 @@ def main():
         weight_decay=config.get('weight_decay', 0.01)
     )
     
+    # LR Scheduler
+    use_cosine_lr = config.get('use_cosine_lr', False)
+    if use_cosine_lr:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=config['num_epochs'],
+            eta_min=config['learning_rate'] * 0.01
+        )
+        logger.info(f"📈 Cosine Annealing LR scheduler enabled (T_max={config['num_epochs']}, eta_min={config['learning_rate']*0.01:.2e})")
+    else:
+        scheduler = None
+    
     # Training setup
+    # Recall-first: best model = recall >= target の中でF1最大、なければrecall最大
+    target_recall = config.get('target_recall', 0.75)
+    min_precision = config.get('min_precision', 0.35)
     best_val_f1 = 0.0
+    best_val_recall = 0.0
+    best_score = -1.0  # recall_ok時はF1、そうでなければrecall
     patience_counter = 0
     use_amp = config.get('use_amp', False) and device == 'cuda'
     scaler = torch.amp.GradScaler('cuda') if use_amp else None
@@ -787,11 +773,29 @@ def main():
         # Generate HTML viewer (auto-refresh every 5 seconds)
         visualizer.generate_html_viewer()
         
-        # Save best model
-        if val_metrics['f1'] > best_val_f1:
-            best_val_f1 = val_metrics['f1']
+        # Step LR scheduler
+        if scheduler is not None:
+            scheduler.step()
+        
+        # Save best model (recall-first, then F1 strategy)
+        # recall >= target_recall かつ active率 <= val_max_active_ratio の中でF1最大を保存。
+        # 条件未達の場合はrecall最大を保存。
+        current_recall = val_metrics['recall']
+        current_f1 = val_metrics['f1']
+        current_precision = val_metrics['precision']
+
+        recall_ok = current_recall >= target_recall and current_precision >= min_precision
+        if recall_ok:
+            current_score = current_f1  # recall達成済み → F1で競う
+        else:
+            current_score = current_recall  # recall未達 → recallで競う
+
+        if current_score > best_score:
+            best_score = current_score
+            best_val_f1 = current_f1
+            best_val_recall = current_recall
             patience_counter = 0
-            
+
             model_path = checkpoint_dir / "best_model.pth"
             torch.save({
                 'epoch': epoch + 1,
@@ -800,7 +804,8 @@ def main():
                 'val_metrics': val_metrics,
                 'config': config
             }, model_path)
-            logger.info(f"✅ Best model saved (F1: {best_val_f1:.4f})")
+            status = "recall+F1" if recall_ok else "recall"
+            logger.info(f"Best model saved [{status}] Recall: {best_val_recall:.4f}, F1: {best_val_f1:.4f}")
         else:
             patience_counter += 1
             if patience_counter >= config.get('early_stopping_patience', 15):
@@ -810,9 +815,9 @@ def main():
     # Save final visualization
     visualizer.save_final()
     
-    logger.info(f"\n✅ Training complete! Best F1: {best_val_f1:.4f}")
+    logger.info(f"\nTraining complete! Best Recall: {best_val_recall:.4f}, Best F1: {best_val_f1:.4f}")
     logger.info(f"Model saved to: {checkpoint_dir / 'best_model.pth'}")
-    logger.info(f"📊 View training progress: {checkpoint_dir / 'view_training.html'}")
+    logger.info(f"View training progress: {checkpoint_dir / 'view_training.html'}")
 
 
 if __name__ == "__main__":

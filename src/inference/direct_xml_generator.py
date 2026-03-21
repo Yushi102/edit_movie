@@ -38,12 +38,33 @@ def create_premiere_xml_direct(
     if ai_telops is None:
         ai_telops = []
     
+    # デフォルト値を設定ファイルから読み込み
+    # （動画から取得できない場合のフォールバック）
+    default_fps = 60.0
+    default_width = 1080
+    default_height = 1920
+    
+    # 設定ファイルがあれば読み込む
+    try:
+        import yaml
+        from pathlib import Path
+        config_path = Path("configs/config_inference.yaml")
+        if config_path.exists():
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                default_video = config.get('default_video', {})
+                default_fps = default_video.get('fps', 60.0)
+                default_width = default_video.get('width', 1080)
+                default_height = default_video.get('height', 1920)
+    except Exception as e:
+        logger.warning(f"Failed to load default video config: {e}")
+    
     # 元動画のFPS・解像度を取得
     import cv2
     cap = cv2.VideoCapture(video_path)
-    video_fps = 60.0  # デフォルト
-    video_width = 1080  # デフォルト
-    video_height = 1920  # デフォルト
+    video_fps = default_fps
+    video_width = default_width
+    video_height = default_height
     
     if cap.isOpened():
         video_fps = cap.get(cv2.CAP_PROP_FPS)
